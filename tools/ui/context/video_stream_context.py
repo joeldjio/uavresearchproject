@@ -362,15 +362,34 @@ class VideoStreamContext(QObject):
             self._set_error(
                 drone_id,
                 state,
-                "OpenCV with GStreamer support is required for live video frames",
+                "OpenCV (cv2) not installed. "
+                "Fix: sudo apt install python3-opencv   "
+                "or   pip install opencv-python",
             )
             return
+
+        # Verify that GStreamer was compiled into OpenCV before attempting
+        # an RTP/H.264 pipeline -- without it the VideoCapture will silently fail.
+        if state.protocol == "rtp-h264-udp":
+            build_info = getattr(cv2, "getBuildInformation", lambda: "")()
+            gst_lines = [line for line in build_info.splitlines() if "GStreamer" in line]
+            gst_enabled = any("YES" in line.upper() for line in gst_lines)
+            if not gst_enabled:
+                self._set_error(
+                    drone_id,
+                    state,
+                    "OpenCV compiled without GStreamer -- RTP/H.264 streams will not work. "
+                    "Fix: sudo apt install python3-opencv  "
+                    "(system package includes the GStreamer backend; "
+                    "replaces the pip opencv-python package)",
+                )
+                return
 
         source = _opencv_source(state)
         backend = getattr(cv2, "CAP_GSTREAMER", 0) if state.protocol == "rtp-h264-udp" else 0
         cap = cv2.VideoCapture(source, backend) if backend else cv2.VideoCapture(source)
         if not cap or not cap.isOpened():
-            self._set_error(drone_id, state, f"Could not open video stream: {state.url}")
+            self._set_error(drone_id, state, f"Could not open video stream: {state.url} (source: {source})")
             return
 
         frame_count = 0

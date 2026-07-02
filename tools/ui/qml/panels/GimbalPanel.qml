@@ -7,11 +7,30 @@ Item {
     id: root
     anchors.fill: parent
 
-    property string selectedDroneId: typeof swarm !== "undefined" ? (swarm.droneIds().length > 0 ? swarm.droneIds()[0] : "") : ""
+    property string selectedDroneId: Cmp.AppState.selectedDroneId !== ""
+                                      ? Cmp.AppState.selectedDroneId
+                                      : (typeof swarm !== "undefined" ? (swarm.droneIds().length > 0 ? swarm.droneIds()[0] : "") : "")
 
     function isObservation(did) {
         if (!did || typeof swarm === "undefined" || !swarm) return false
-        return swarm.droneType(did) === "observation"
+        return String(swarm.droneType(did) || "").toLowerCase() === "observation"
+    }
+
+    // Select the drone in VideoStreamContext when this panel opens so the
+    // stream status badge and frame URL are already wired up.
+    Component.onCompleted: {
+        if (root.selectedDroneId !== "" &&
+            typeof videoStream !== "undefined" && videoStream)
+            videoStream.selectDrone(root.selectedDroneId)
+    }
+
+    Connections {
+        target: Cmp.AppState
+        function onSelectedDroneIdChanged() {
+            root.selectedDroneId = Cmp.AppState.selectedDroneId
+            if (typeof videoStream !== "undefined" && videoStream && root.selectedDroneId !== "")
+                videoStream.selectDrone(root.selectedDroneId)
+        }
     }
 
     ScrollView {

@@ -116,7 +116,9 @@ def detect_capabilities(source: Any = None, overrides: Optional[Dict[str, Any]] 
     mock objects can use dicts or lightweight fakes without importing MAVLink.
     """
     data = _status_dict(source)
-    drone_type = str(data.get("droneType") or data.get("type") or "").lower()
+    drone_type = str(
+        data.get("droneType") or data.get("drone_type") or data.get("type") or ""
+    ).lower()
     is_observation = drone_type == "observation"
 
     caps = DroneCapabilities(
@@ -189,7 +191,7 @@ def _status_dict(source: Any) -> Dict[str, Any]:
     # Last-resort: read only the known safe attribute names instead of
     # iterating dir(), which can invoke property getters with side effects.
     _SAFE_KEYS = ("has_camera", "has_gimbal", "has_thermal", "has_dispenser",
-                  "has_gps", "droneType", "type")
+                  "has_gps", "droneType", "type", "drone_type")
     result: Dict[str, Any] = {}
     for key in _SAFE_KEYS:
         if hasattr(source, key):

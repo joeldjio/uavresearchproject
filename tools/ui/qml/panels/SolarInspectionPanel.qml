@@ -15,6 +15,14 @@ Rectangle {
         checkCapabilities()
     }
 
+    // Re-run the capability check whenever the drone type changes.
+    // SwarmContext.setDroneType emits telemetryUpdated -- catching it here
+    // means the wizard unlocks immediately after the user picks "Observation".
+    Connections {
+        target: typeof swarm !== "undefined" ? swarm : null
+        function onTelemetryUpdated() { root.checkCapabilities() }
+    }
+
     property int currentStep: 0
     property var solarRows: []
     property real rowSpacing: 2.0
@@ -188,8 +196,11 @@ Rectangle {
             return
         }
         
-        // Check mode requirements for solar inspection
-        capabilityCheck = capabilities.checkModeRequirements("solar")
+        // Check mode requirements for the globally selected drone when possible.
+        var did = Cmp.AppState.selectedDroneId || ""
+        capabilityCheck = did !== "" && capabilities.checkDroneModeRequirements
+                          ? capabilities.checkDroneModeRequirements(did, "solar")
+                          : capabilities.checkModeRequirements("solar")
         
         if (capabilityCheck) {
             capabilitiesSatisfied = capabilityCheck.satisfied || false

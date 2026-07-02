@@ -31,7 +31,7 @@ Rectangle {
     function buildConnStr() {
         var t = connTypes[connTypeIdx]
         if (t === "Serial") return portInput.text + ":" + baudBox.currentText
-        if (t === "UDP")    return "udp:" + addrInput.text + ":" + udpPortInput.text
+        if (t === "UDP")    return (addrInput.text === "0.0.0.0" ? "udpin:" : "udp:") + addrInput.text + ":" + udpPortInput.text
         if (t === "TCP")    return "tcp:" + addrInput.text + ":" + udpPortInput.text
         return portInput.text
     }

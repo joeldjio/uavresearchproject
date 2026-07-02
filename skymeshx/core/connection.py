@@ -213,7 +213,8 @@ class MAVLinkConnection:
 
         Accepted formats:
           tcp:HOST:PORT    e.g. tcp:127.0.0.1:5760
-          udp:HOST:PORT    e.g. udp:0.0.0.0:14550
+          udp:HOST:PORT    e.g. udp:127.0.0.1:14550
+          udpin:HOST:PORT  e.g. udpin:0.0.0.0:14550
           /dev/ttyUSBx     Linux serial device (optionally :BAUD)
           serial:/dev/…    pymavlink serial prefix form
           COMx             Windows serial port (optionally :BAUD)
@@ -221,8 +222,8 @@ class MAVLinkConnection:
         if not s or not s.strip():
             raise ValueError("Connection string must not be empty")
         s = s.strip()
-        # tcp:HOST:PORT  or  udp:HOST:PORT
-        m = re.match(r"^(tcp|udp):([^:]+):(\d+)$", s, re.IGNORECASE)
+        # tcp/udp/udpin/udpout:HOST:PORT
+        m = re.match(r"^(tcp|udp|udpin|udpout):([^:]+):(\d+)$", s, re.IGNORECASE)
         if m:
             port = int(m.group(3))
             if not (1 <= port <= 65535):
@@ -239,7 +240,7 @@ class MAVLinkConnection:
             return s
         raise ValueError(
             f"Unrecognized connection string {s!r}. "
-            "Expected tcp:HOST:PORT, udp:HOST:PORT, "
+            "Expected tcp:HOST:PORT, udp:HOST:PORT, udpin:HOST:PORT, "
             "/dev/ttyUSBx[:BAUD], serial:/dev/..., or COMx[:BAUD]"
         )
 

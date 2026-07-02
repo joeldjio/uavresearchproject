@@ -49,8 +49,15 @@ from PySide6.QtCore import QObject, Signal, Slot, QTimer
 # Importing rclpy is expensive (1-3s on cold start). We only check if
 # it CAN be imported via importlib.util.find_spec, then defer the real
 # import to first bridge start.
-_ROS2_AVAILABLE   = importlib.util.find_spec("rclpy") is not None
-_BRIDGE_AVAILABLE = importlib.util.find_spec("skymeshx.ros.px4_bridge") is not None
+def _has_import_spec(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+_ROS2_AVAILABLE   = _has_import_spec("rclpy")
+_BRIDGE_AVAILABLE = _has_import_spec("skymeshx.ros.px4_bridge")
 _PX4Bridge: Optional[type] = None  # populated on first start_bridge
 
 
@@ -195,8 +202,8 @@ def _refresh_ros2_availability() -> None:
     """Refresh import probes after ROS2 setup files changed the environment."""
     global _ROS2_AVAILABLE, _BRIDGE_AVAILABLE
     importlib.invalidate_caches()
-    _ROS2_AVAILABLE = importlib.util.find_spec("rclpy") is not None
-    _BRIDGE_AVAILABLE = importlib.util.find_spec("skymeshx.ros.px4_bridge") is not None
+    _ROS2_AVAILABLE = _has_import_spec("rclpy")
+    _BRIDGE_AVAILABLE = _has_import_spec("skymeshx.ros.px4_bridge")
 
 
 def _ensure_bridge_loaded() -> bool:
@@ -370,7 +377,24 @@ class ROS2Context(QObject):
         return True
 
     def _terminal_launcher(self) -> tuple[str, list[str]] | None:
-        if sys.platform == "win32" or not self._use_terminal:
+        if not self._use_terminal:
+            return None
+        if sys.platform == "win32":
+            wsl_path = shutil.which("wsl.exe")
+            if not wsl_path:
+                return None
+            wt_path = shutil.which("wt.exe")
+            if wt_path:
+                return (
+                    "Windows Terminal (WSL)",
+                    [wt_path, "new-tab", "--title", "{title}", wsl_path, "bash", "{script_wsl}"],
+                )
+            cmd_path = shutil.which("cmd.exe")
+            if cmd_path:
+                return (
+                    "cmd (WSL)",
+                    [cmd_path, "/c", "start", "{title}", wsl_path, "bash", "{script_wsl}"],
+                )
             return None
         candidates = [
             ("gnome-terminal", ["gnome-terminal", "--title", "{title}", "--", "bash", "{script}"]),
@@ -385,10 +409,19 @@ class ROS2Context(QObject):
                 return binary, resolved
         return None
 
+    def _wsl_path(self, path: Path) -> str:
+        resolved = str(path.resolve())
+        drive, tail = os.path.splitdrive(resolved)
+        if drive:
+            letter = drive[0].lower()
+            tail = tail.replace("\\", "/")
+            return f"/mnt/{letter}{tail}"
+        return resolved.replace("\\", "/")
+
     def _launch_visible_terminal(self, title: str, script_lines: list[str]) -> subprocess.Popen | None:
         launcher = self._terminal_launcher()
         if not launcher:
-            self.ros2LogMessage.emit("WARN", f"[ROS2] No Linux terminal launcher found for '{title}'")
+            self.ros2LogMessage.emit("WARN", f"[ROS2] No visible terminal launcher found for '{title}'")
             return None
 
         terminal_name, template = launcher
@@ -414,8 +447,19 @@ class ROS2Context(QObject):
             "{title}": title,
             "{script}": str(script_path),
             "{script_q}": shlex.quote(str(script_path)),
+            "{script_wsl}": self._wsl_path(script_path),
         }
-        cmd = [replacements.get(part, part.format(title=title, script=str(script_path), script_q=shlex.quote(str(script_path)))) for part in template]
+        cmd = [
+            replacements[part]
+            if part in replacements
+            else part.format(
+                title=title,
+                script=str(script_path),
+                script_q=shlex.quote(str(script_path)),
+                script_wsl=self._wsl_path(script_path),
+            )
+            for part in template
+        ]
         try:
             proc = subprocess.Popen(cmd)
             self.ros2LogMessage.emit("INFO", f"[ROS2] Opened {terminal_name}: {title}")
@@ -726,7 +770,15 @@ class ROS2Context(QObject):
     def nodeStatus(self) -> str:
         _refresh_ros2_availability()
         if not _ROS2_AVAILABLE:
-            return "no_ros2"
+            # On Linux with ROS2, rclpy is only importable after setup.bash is
+            # sourced. Try sourcing once per poll cycle so the status dot turns
+            # green automatically when the user has configured setup files.
+            sources = self._ros2_setup_sources()
+            if sources:
+                self._apply_ros2_setup_environment(sources, "status_check")
+                _refresh_ros2_availability()
+            if not _ROS2_AVAILABLE:
+                return "no_ros2"
         if not _BRIDGE_AVAILABLE:
             return "no_px4_msgs"
         return "ok"
@@ -802,6 +854,11 @@ class ROS2Context(QObject):
                 self.bridgeStatusChanged.emit(drone_id, True)
                 self.ros2LogMessage.emit("INFO", f"[ROS2] Bridge started for {drone_id} ns='{ns or '/'}'")
                 self.ros2LogMessage.emit("INFO", f"[ROS2] Listening on {ns or ''}/fmu/out/*")
+                domain = os.environ.get("ROS_DOMAIN_ID", "0 (default)")
+                self.ros2LogMessage.emit("INFO",
+                    f"[ROS2] ROS_DOMAIN_ID={domain} -- PX4 must use the same domain")
+                self.ros2LogMessage.emit("INFO",
+                    "[ROS2] MicroXRCEAgent udp4 -p 8888 must be running in a separate terminal")
                 self._write_bridge_terminal_log(drone_id, "Bridge started")
                 self._write_bridge_terminal_log(drone_id, f"Listening on {ns or ''}/fmu/out/*")
             except Exception as e:
@@ -1126,6 +1183,45 @@ class ROS2Context(QObject):
         """Enable/disable visible terminal launch for Bridge/SITL starts."""
         self._use_terminal = bool(enabled)
 
+    @Slot(result=str)
+    def getRos2EnvInfo(self) -> str:
+        """Return current ROS_DOMAIN_ID and ROS_LOCALHOST_ONLY for display in the UI."""
+        domain = os.environ.get("ROS_DOMAIN_ID", "0 (default)")
+        localhost = os.environ.get("ROS_LOCALHOST_ONLY", "0")
+        return f"ROS_DOMAIN_ID={domain}  ROS_LOCALHOST_ONLY={localhost}"
+
+    @Slot(str, str, result=bool)
+    def launchCommandInTerminal(self, title: str, command: str) -> bool:
+        """
+        Open a visible terminal emulator and run *command* in it.
+
+        Internally delegates to _launch_visible_terminal which tries
+        gnome-terminal / konsole / xfce4-terminal / xterm in order.
+        Returns True if a terminal process was spawned, False otherwise
+        (e.g., on Windows or when no emulator is found in PATH).
+        """
+        proc = self._launch_visible_terminal(title, [command])
+        if proc is None:
+            return False
+        self.ros2LogMessage.emit("INFO", f"[ROS2] Terminal opened: {title}")
+        return True
+
+    @Slot(str, str, str, result=str)
+    def buildSitlCommand(self, px4_dir: str, namespace: str, make_target: str) -> str:
+        """
+        Build the three-line PX4 SITL startup command string.
+        Useful for QML TextEdit live-preview fields.
+        """
+        import shlex as _shlex
+        ns = namespace.strip() or "uav_1"
+        mt = make_target.strip() or "gz_x500"
+        px4 = os.path.expanduser(px4_dir.strip()) if px4_dir.strip() else "~/PX4-Autopilot"
+        return (
+            f"cd {_shlex.quote(px4)}\n"
+            f"export PX4_UXRCE_DDS_NS={_shlex.quote(ns)}\n"
+            f"make px4_sitl {_shlex.quote(mt)}"
+        )
+
     @Slot(str)
     def addSitlRos2Setup(self, path: str) -> None:
         """Add ROS2 setup file."""
@@ -1290,6 +1386,12 @@ class ROS2Context(QObject):
             except FileNotFoundError as exc:
                 self._sitl_status.update({"running": False, "status": "failed", "gazebo_running": False})
                 self.ros2LogMessage.emit("ERROR", f"[SITL] PX4 directory not found: {exc}")
+                self._trace_event("sitl_launch", {"status": "failed", "error": str(exc)})
+            except ImportError as exc:
+                self._sitl_status.update({"running": False, "status": "failed", "gazebo_running": False})
+                self.ros2LogMessage.emit("ERROR",
+                    f"[SITL] PX4GazeboCluster not available ({exc}). "
+                    "Use the Command Launcher in the Connection tab to start PX4 manually.")
                 self._trace_event("sitl_launch", {"status": "failed", "error": str(exc)})
             except Exception as exc:
                 self._sitl_status.update({"running": False, "status": "failed", "gazebo_running": False})

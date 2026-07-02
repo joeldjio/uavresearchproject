@@ -7,10 +7,46 @@ Item {
     id: root
     anchors.fill: parent
 
-    property string selectedDroneId: ""
+    property string selectedDroneId: Cmp.AppState.selectedDroneId
     property string _nodeStatus: (typeof ros2 !== "undefined" && ros2) ? ros2.nodeStatus() : "no_ros2"
     property var globalWaypoints: null  // Injected from main.qml
     property bool _useVisibleTerminal: (typeof ros2 !== "undefined" && ros2 && ros2.getUseVisibleTerminal) ? ros2.getUseVisibleTerminal() : true
+
+    // Tracks whether the bridge for the currently selected drone is active.
+    // Polled every 500ms so the Debug-tab warning and the Connection-tab status
+    // stay in sync without needing cross-tab id references.
+    property bool _anyBridgeActive: false
+    Timer {
+        interval: 500; running: true; repeat: true
+        onTriggered: root._anyBridgeActive =
+            (typeof ros2 !== "undefined" && ros2 && root.selectedDroneId !== "")
+            ? ros2.isBridgeActive(root.selectedDroneId) : false
+    }
+
+    // Keep selectedDroneId in sync when any other panel changes the global selection.
+    Connections {
+        target: Cmp.AppState
+        function onSelectedDroneIdChanged() {
+            root.selectedDroneId = Cmp.AppState.selectedDroneId
+            var model = droneCombo.model
+            if (!model) return
+            var idx = -1
+            for (var i = 0; i < model.length; i++) {
+                if (model[i] === Cmp.AppState.selectedDroneId) { idx = i; break }
+            }
+            if (idx >= 0 && droneCombo.currentIndex !== idx)
+                droneCombo.currentIndex = idx
+        }
+    }
+
+    // Force a fresh nodeStatus check when the panel first loads so the status
+    // dot shows the correct colour immediately (not stale from import time).
+    Component.onCompleted: {
+        root._nodeStatus = (typeof ros2 !== "undefined" && ros2)
+                           ? ros2.nodeStatus() : "no_ros2"
+        if (Cmp.AppState.selectedDroneId !== "")
+            root.selectedDroneId = Cmp.AppState.selectedDroneId
+    }
 
     function statusColor(s) {
         if (s === "ok")           return "#22c55e"
@@ -40,6 +76,16 @@ Item {
                 result.push(line)
         }
         return result
+    }
+    function shellCommandFromText(text) {
+        var raw = text.split(/\r?\n/)
+        var result = []
+        for (var i = 0; i < raw.length; ++i) {
+            var line = raw[i].trim()
+            if (line.length > 0)
+                result.push(line)
+        }
+        return result.join(" && ")
     }
     function ros2SetupSourceList() {
         if (!setupSourcesEdit)
@@ -165,9 +211,10 @@ Item {
                 }
 
                 // ── Bridge Connect ──────────────────────────────────
-                Text { text: "PX4 BRIDGE"; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; leftPadding: 0 }
+                Text { text: "PX4 BRIDGE"; visible: false; height: 0; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; leftPadding: 0 }
                 Rectangle {
-                    width: parent.width - 24; height: connCol.implicitHeight + 20; radius: 8
+                    visible: false
+                    width: parent.width - 24; height: 0; radius: 8
                     color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                     Column {
                         id: connCol
@@ -179,7 +226,25 @@ Item {
                             model: (typeof swarm !== "undefined" && swarm) ? swarm.droneIds() : []
                             background: Rectangle { color: "#1e2535"; radius: 5; border.color: "#2d3748"; border.width: 1 }
                             contentItem: Text { text: droneCombo.displayText; color: "#e2e8f0"; font.pixelSize: 11; verticalAlignment: Text.AlignVCenter; leftPadding: 6 }
-                            onCurrentTextChanged: { if (currentText) Cmp.AppState.selectedDroneId = currentText }
+                            Component.onCompleted: {
+                                if (Cmp.AppState.selectedDroneId !== "") {
+                                    for (var i = 0; i < model.length; i++) {
+                                        if (model[i] === Cmp.AppState.selectedDroneId) {
+                                            currentIndex = i
+                                            break
+                                        }
+                                    }
+                                } else if (currentText) {
+                                    root.selectedDroneId = currentText
+                                    Cmp.AppState.selectedDroneId = currentText
+                                }
+                            }
+                            onCurrentTextChanged: {
+                                if (currentText) {
+                                    root.selectedDroneId = currentText
+                                    Cmp.AppState.selectedDroneId = currentText
+                                }
+                            }
                         }
 
                         Row {
@@ -187,6 +252,7 @@ Item {
                             Text { text: "NS:"; color: "#64748b"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter; width: 22 }
                             TextField {
                                 id: nsField; width: parent.width - 28; height: 26
+                                text: (typeof ros2 !== "undefined" && ros2) ? ros2.getSitlNamespace() : "uav_1"
                                 placeholderText: "uav_1  (empty = /fmu/*)"
                                 background: Rectangle { color: "#1e2535"; radius: 5; border.color: "#2d3748"; border.width: 1 }
                                 color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas"; leftPadding: 6
@@ -279,9 +345,10 @@ Item {
                 }
 
                 // ── PX4 SITL ───────────────────────────────────────
-                Text { text: "PX4 SITL"; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
+                Text { text: "PX4 SITL"; visible: false; height: 0; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
                 Rectangle {
-                    width: parent.width - 24; height: sitlCol.implicitHeight + 20; radius: 8
+                    visible: false
+                    width: parent.width - 24; height: 0; radius: 8
                     color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                     Column {
                         id: sitlCol
@@ -483,9 +550,10 @@ Item {
                 }
 
                 // ── Multi-Vehicle SITL ──────────────────────────────
-                Text { text: "MULTI-VEHICLE SITL"; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
+                Text { text: "MULTI-VEHICLE SITL"; visible: false; height: 0; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
                 Rectangle {
-                    width: parent.width - 24; height: multiCol.implicitHeight + 20; radius: 8
+                    visible: false
+                    width: parent.width - 24; height: 0; radius: 8
                     color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                     Column {
                         id: multiCol
@@ -541,9 +609,10 @@ Item {
                 }
 
                 // ── Formation Control ───────────────────────────────
-                Text { text: "FORMATION CONTROL"; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
+                Text { text: "FORMATION CONTROL"; visible: false; height: 0; color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1 }
                 Rectangle {
-                    width: parent.width - 24; height: formCol.implicitHeight + 20; radius: 8
+                    visible: false
+                    width: parent.width - 24; height: 0; radius: 8
                     color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                     Column {
                         id: formCol
@@ -623,6 +692,364 @@ Item {
                                 MouseArea{id:disarmM;anchors.fill:parent;hoverEnabled:true;onClicked:{if(typeof ros2!=="undefined"&&ros2)ros2.disarmFormation()}}
                             }
                         }
+                    }
+                }
+
+                // ═══════════════════════════════════════════════════
+                // COMMAND LAUNCHER
+                // Generates the exact shell commands the user needs to run,
+                // with live editing and "▶ Run in Terminal" buttons.
+                // ═══════════════════════════════════════════════════
+                Text {
+                    text: "COMMAND LAUNCHER"
+                    color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold
+                    font.letterSpacing: 1
+                }
+                Rectangle {
+                    width: parent.width - 24
+                    height: launchCol.implicitHeight + 20
+                    radius: 8; color: "#0d1117"; border.color: "#2d3748"; border.width: 1
+
+                    Column {
+                        id: launchCol
+                        anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                        spacing: 10
+
+                        // ─── Step 1: MicroXRCE-DDS Agent ───────────────────────
+                        Rectangle {
+                            width: parent.width; height: 22; radius: 4
+                            color: "#1a1500"; border.color: "#f59e0b"; border.width: 1
+                            Text {
+                                anchors { fill: parent; leftMargin: 8 }
+                                text: "Step 1  —  Start MicroXRCE-DDS Agent (own terminal)"
+                                color: "#fcd34d"; font.pixelSize: 9; font.weight: Font.Bold
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Text { text: "Port:"; color: "#64748b"; font.pixelSize: 9; width: 32; anchors.verticalCenter: parent.verticalCenter }
+                            TextField {
+                                id: xrcePortField; width: 64; height: 26; text: "8888"
+                                background: Rectangle { color: "#1e2535"; radius: 4; border.color: "#2d3748"; border.width: 1 }
+                                color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas"; leftPadding: 6
+                                inputMethodHints: Qt.ImhDigitsOnly
+                            }
+                            Text { text: "Agent dir:"; color: "#64748b"; font.pixelSize: 9; width: 56; anchors.verticalCenter: parent.verticalCenter }
+                            TextField {
+                                id: xrceDirField; width: parent.width - 64 - 32 - 56 - 18; height: 26
+                                text: "~/Micro-XRCE-DDS-Agent"
+                                placeholderText: "~/Micro-XRCE-DDS-Agent"
+                                background: Rectangle { color: "#1e2535"; radius: 4; border.color: "#2d3748"; border.width: 1 }
+                                color: "#e2e8f0"; font.pixelSize: 9; font.family: "Consolas"; leftPadding: 6
+                            }
+                        }
+
+                        // Live command preview (read-only, selectable for copy-paste)
+                        Rectangle {
+                            width: parent.width; height: xrceCmdEdit.implicitHeight + 10
+                            radius: 4; color: "#111827"; border.color: "#374151"; border.width: 1
+                            TextEdit {
+                                id: xrceCmdEdit
+                                anchors { fill: parent; margins: 5 }
+                                text: "cd " + xrceDirField.text + "\nMicroXRCEAgent udp4 -p " + xrcePortField.text
+                                readOnly: false; selectByMouse: true
+                                color: "#86efac"; font.pixelSize: 9; font.family: "Consolas"
+                                wrapMode: TextEdit.Wrap
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: xrceRunM.containsMouse ? "#166534" : "#14532d"; border.color: "#22c55e"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "▶  Run Agent in Terminal"; color: "#86efac"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: xrceRunM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: {
+                                        if (typeof ros2 === "undefined" || !ros2) return
+                                        var cmd = root.shellCommandFromText(xrceCmdEdit.text)
+                                        if (!ros2.launchCommandInTerminal("MicroXRCE-DDS Agent", cmd))
+                                            ros2.ros2LogMessage("WARN",
+                                                "[ROS2] No terminal found. Run manually:\n" + cmd)
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: xrceCopyM.containsMouse ? "#1e3a5f" : "#1e2535"; border.color: "#3b82f6"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "⎘  Copy command"; color: "#93c5fd"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: xrceCopyM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: { xrceCmdEdit.selectAll(); xrceCmdEdit.copy(); xrceCmdEdit.deselect() }
+                                }
+                            }
+                        }
+
+                        Rectangle { width: parent.width; height: 1; color: "#1e2535" }
+
+                        // ─── Step 2: PX4 SITL ──────────────────────────────────
+                        Rectangle {
+                            width: parent.width; height: 22; radius: 4
+                            color: "#1a1500"; border.color: "#f59e0b"; border.width: 1
+                            Text {
+                                anchors { fill: parent; leftMargin: 8 }
+                                text: "Step 2  —  Start PX4 SITL (own terminal)"
+                                color: "#fcd34d"; font.pixelSize: 9; font.weight: Font.Bold
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Text { text: "NS:"; color: "#64748b"; font.pixelSize: 9; width: 24; anchors.verticalCenter: parent.verticalCenter }
+                            TextField {
+                                id: launchNsField; width: 80; height: 26
+                                text: (typeof ros2 !== "undefined" && ros2) ? ros2.getSitlNamespace() : "uav_1"
+                                background: Rectangle { color: "#1e2535"; radius: 4; border.color: "#2d3748"; border.width: 1 }
+                                color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas"; leftPadding: 6
+                                onEditingFinished: { if (typeof ros2 !== "undefined" && ros2) ros2.setSitlNamespace(text) }
+                            }
+                            Text { text: "Make target:"; color: "#64748b"; font.pixelSize: 9; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        TextField {
+                            id: makeTargetField; width: parent.width; height: 26
+                            text: "gz_x500_gimbal_baylands"
+                            placeholderText: "gz_x500  /  gz_x500_gimbal  /  gz_x500_gimbal_baylands"
+                            background: Rectangle { color: "#1e2535"; radius: 4; border.color: "#3b82f6"; border.width: 2 }
+                            color: "#93c5fd"; font.pixelSize: 10; font.family: "Consolas"; leftPadding: 6
+                            ToolTip.visible: hovered; ToolTip.delay: 500
+                            ToolTip.text: "PX4 make target used as:  make px4_sitl <this>\n"
+                                        + "Examples:\n  gz_x500\n  gz_x500_gimbal\n  gz_x500_gimbal_baylands"
+                        }
+
+                        // Live command preview
+                        Rectangle {
+                            width: parent.width; height: px4CmdEdit.implicitHeight + 10
+                            radius: 4; color: "#111827"; border.color: "#374151"; border.width: 1
+                            TextEdit {
+                                id: px4CmdEdit
+                                anchors { fill: parent; margins: 5 }
+                                text: {
+                                    var dir = (typeof ros2 !== "undefined" && ros2 && ros2.getSitlPx4Dir())
+                                              ? ros2.getSitlPx4Dir() : "~/PX4-Autopilot"
+                                    if (!dir || dir === "") dir = "~/PX4-Autopilot"
+                                    return "cd " + dir + "\n"
+                                         + "export PX4_UXRCE_DDS_NS=" + launchNsField.text + "\n"
+                                         + "make px4_sitl " + makeTargetField.text
+                                }
+                                readOnly: false; selectByMouse: true
+                                color: "#86efac"; font.pixelSize: 9; font.family: "Consolas"
+                                wrapMode: TextEdit.Wrap
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: px4RunM.containsMouse ? "#166534" : "#14532d"; border.color: "#22c55e"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "▶  Run PX4 SITL in Terminal"; color: "#86efac"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: px4RunM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: {
+                                        if (typeof ros2 === "undefined" || !ros2) return
+                                        var cmd = root.shellCommandFromText(px4CmdEdit.text)
+                                        if (!ros2.launchCommandInTerminal("PX4 SITL", cmd))
+                                            ros2.ros2LogMessage("WARN",
+                                                "[ROS2] No terminal found. Run manually:\n" + cmd)
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: px4CopyM.containsMouse ? "#1e3a5f" : "#1e2535"; border.color: "#3b82f6"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "⎘  Copy command"; color: "#93c5fd"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: px4CopyM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: { px4CmdEdit.selectAll(); px4CmdEdit.copy(); px4CmdEdit.deselect() }
+                                }
+                            }
+                        }
+
+                        Rectangle { width: parent.width; height: 1; color: "#1e2535" }
+
+                        // ─── Step 3: ROS2 Workspace (px4_ros_com listener) ──────
+                        Rectangle {
+                            width: parent.width; height: 22; radius: 4
+                            color: "#0f1e35"; border.color: "#3b82f6"; border.width: 1
+                            Text {
+                                anchors { fill: parent; leftMargin: 8 }
+                                text: "Step 3  —  Source & launch ROS2 workspace (optional, own terminal)"
+                                color: "#93c5fd"; font.pixelSize: 9; font.weight: Font.Bold
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Text { text: "Workspace dir:"; color: "#64748b"; font.pixelSize: 9; width: 90; anchors.verticalCenter: parent.verticalCenter }
+                            TextField {
+                                id: ros2WsDirField; width: parent.width - 90 - 6; height: 26
+                                text: "~/ws_sensor_combined"
+                                placeholderText: "~/ws_sensor_combined"
+                                background: Rectangle { color: "#1e2535"; radius: 4; border.color: "#2d3748"; border.width: 1 }
+                                color: "#e2e8f0"; font.pixelSize: 9; font.family: "Consolas"; leftPadding: 6
+                            }
+                        }
+                        Row {
+                            width: parent.width; spacing: 6
+                            Text { text: "Launch file:"; color: "#64748b"; font.pixelSize: 9; width: 90; anchors.verticalCenter: parent.verticalCenter }
+                            TextField {
+                                id: ros2LaunchFileField; width: parent.width - 90 - 6; height: 26
+                                text: "px4_ros_com sensor_combined_listener.launch.py"
+                                placeholderText: "px4_ros_com sensor_combined_listener.launch.py"
+                                background: Rectangle { color: "#1e2535"; radius: 4; border.color: "#2d3748"; border.width: 1 }
+                                color: "#e2e8f0"; font.pixelSize: 9; font.family: "Consolas"; leftPadding: 6
+                            }
+                        }
+
+                        Rectangle {
+                            width: parent.width; height: 22; radius: 4
+                            color: "#101827"; border.color: "#64748b"; border.width: 1
+                            Text {
+                                anchors { fill: parent; leftMargin: 8 }
+                                text: "Build ROS 2 Workspace (px4_msgs + px4_ros_com)"
+                                color: "#cbd5e1"; font.pixelSize: 9; font.weight: Font.Bold
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                        }
+
+                        Rectangle {
+                            width: parent.width; height: ros2BuildCmdEdit.implicitHeight + 10
+                            radius: 4; color: "#111827"; border.color: "#374151"; border.width: 1
+                            TextEdit {
+                                id: ros2BuildCmdEdit
+                                anchors { fill: parent; margins: 5 }
+                                text: {
+                                    var setupSrc = setupSourcesEdit && setupSourcesEdit.text.trim() !== ""
+                                                   ? setupSourcesEdit.text.split("\n")[0].trim()
+                                                   : "/opt/ros/humble/setup.bash"
+                                    return "mkdir -p " + ros2WsDirField.text + "/src\n"
+                                         + "cd " + ros2WsDirField.text + "/src\n"
+                                         + "if [ ! -d px4_msgs ]; then git clone https://github.com/PX4/px4_msgs.git; fi\n"
+                                         + "if [ ! -d px4_ros_com ]; then git clone https://github.com/PX4/px4_ros_com.git; fi\n"
+                                         + "cd " + ros2WsDirField.text + "\n"
+                                         + "source " + setupSrc + "\n"
+                                         + "colcon build"
+                                }
+                                readOnly: false; selectByMouse: true
+                                color: "#cbd5e1"; font.pixelSize: 9; font.family: "Consolas"
+                                wrapMode: TextEdit.Wrap
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: ros2BuildRunM.containsMouse ? "#334155" : "#1f2937"; border.color: "#64748b"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "▶  Build ROS2 workspace"; color: "#cbd5e1"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: ros2BuildRunM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: {
+                                        if (typeof ros2 === "undefined" || !ros2) return
+                                        var cmd = root.shellCommandFromText(ros2BuildCmdEdit.text)
+                                        if (!ros2.launchCommandInTerminal("Build ROS2 Workspace", cmd))
+                                            ros2.ros2LogMessage("WARN",
+                                                "[ROS2] No terminal found. Run manually:\n" + cmd)
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: ros2BuildCopyM.containsMouse ? "#1e3a5f" : "#1e2535"; border.color: "#3b82f6"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "⎘  Copy build command"; color: "#93c5fd"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: ros2BuildCopyM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: { ros2BuildCmdEdit.selectAll(); ros2BuildCmdEdit.copy(); ros2BuildCmdEdit.deselect() }
+                                }
+                            }
+                        }
+
+                        // Live command preview for Step 3
+                        Rectangle {
+                            width: parent.width; height: ros2WsCmdEdit.implicitHeight + 10
+                            radius: 4; color: "#111827"; border.color: "#374151"; border.width: 1
+                            TextEdit {
+                                id: ros2WsCmdEdit
+                                anchors { fill: parent; margins: 5 }
+                                text: {
+                                    var setupSrc = setupSourcesEdit && setupSourcesEdit.text.trim() !== ""
+                                                   ? setupSourcesEdit.text.split("\n")[0].trim()
+                                                   : "/opt/ros/humble/setup.bash"
+                                    return "cd " + ros2WsDirField.text + "\n"
+                                         + "source " + setupSrc + "\n"
+                                         + "source install/local_setup.bash\n"
+                                         + "ros2 launch " + ros2LaunchFileField.text
+                                }
+                                readOnly: false; selectByMouse: true
+                                color: "#93c5fd"; font.pixelSize: 9; font.family: "Consolas"
+                                wrapMode: TextEdit.Wrap
+                            }
+                        }
+
+                        Row {
+                            width: parent.width; spacing: 6
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: ros2WsRunM.containsMouse ? "#1e40af" : "#1e3a8a"; border.color: "#3b82f6"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "▶  Launch ROS2 node"; color: "#93c5fd"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: ros2WsRunM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: {
+                                        if (typeof ros2 === "undefined" || !ros2) return
+                                        var cmd = root.shellCommandFromText(ros2WsCmdEdit.text)
+                                        if (!ros2.launchCommandInTerminal("ROS2 Workspace", cmd))
+                                            ros2.ros2LogMessage("WARN",
+                                                "[ROS2] No terminal found. Run manually:\n" + cmd)
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: (parent.width - 6) / 2; height: 30; radius: 5
+                                color: ros2WsCopyM.containsMouse ? "#1e3a5f" : "#1e2535"; border.color: "#3b82f6"; border.width: 1
+                                Text { anchors.centerIn: parent; text: "⎘  Copy command"; color: "#93c5fd"; font.pixelSize: 9; font.weight: Font.Bold }
+                                MouseArea {
+                                    id: ros2WsCopyM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: { ros2WsCmdEdit.selectAll(); ros2WsCmdEdit.copy(); ros2WsCmdEdit.deselect() }
+                                }
+                            }
+                        }
+
+                        Rectangle { width: parent.width; height: 1; color: "#1e2535" }
+
+                        // ─── Step 4: Connect via TCP header ────────────────────
+                        Rectangle {
+                            width: parent.width; height: step4Col.implicitHeight + 14
+                            radius: 6; color: "#0f2d1a"; border.color: "#22c55e"; border.width: 1
+                            Column {
+                                id: step4Col
+                                anchors { fill: parent; margins: 8 }
+                                spacing: 4
+                                Text {
+                                    text: "Step 4  —  Connect from GCS header (after SITL ready)"
+                                    color: "#22c55e"; font.pixelSize: 9; font.weight: Font.Bold
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: "1. Wait for PX4 console:  INFO [commander] Ready for takeoff!\n"
+                                        + "2. PX4 SITL MAVLink: select UDP/listen → 0.0.0.0 : 14550 → click  + ADD\n"
+                                        + "   ArduCopter raw SITL only: TCP → 127.0.0.1 : 5762\n"
+                                        + "3. Green badge appears → drone connected"
+                                    color: "#86efac"; font.pixelSize: 8; font.family: "Consolas"
+                                    wrapMode: Text.WordWrap
+                                }
+                            }
+                        }
+
                     }
                 }
                 Item { width: 1; height: 8 }
@@ -907,6 +1334,14 @@ Item {
                         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
                         spacing: 8
 
+                        // Select the drone in videoStream context when this tab opens,
+                        // because the drone combo may already have a value from another panel.
+                        Component.onCompleted: {
+                            if (root.selectedDroneId !== "" &&
+                                typeof videoStream !== "undefined" && videoStream)
+                                videoStream.selectDrone(root.selectedDroneId)
+                        }
+
                         property string _vsStatus: {
                             if (typeof videoStream === "undefined" || !videoStream || !root.selectedDroneId) return "unconfigured"
                             var s = videoStream.getVideoStatus(root.selectedDroneId)
@@ -1118,6 +1553,22 @@ Item {
                         id: cmdCol
                         anchors { fill: parent; margins: 10 }
                         spacing: 6
+
+                        // Warning shown when no bridge is active or no drone selected
+                        Rectangle {
+                            width: parent.width; height: bridgeWarnTxt.implicitHeight + 12
+                            radius: 5; color: "#1a1500"; border.color: "#f59e0b"; border.width: 1
+                            visible: !root._anyBridgeActive || root.selectedDroneId === ""
+                            Text {
+                                id: bridgeWarnTxt
+                                anchors { fill: parent; margins: 6 }
+                                text: root.selectedDroneId === ""
+                                      ? "⚠  No drone selected — select a drone in the Connection tab first"
+                                      : "⚠  PX4 bridge not active — start the ROS2/PX4 stack from the Command Launcher first"
+                                color: "#fcd34d"; font.pixelSize: 9; wrapMode: Text.WordWrap
+                            }
+                        }
+
                         Repeater {
                             model: [{label:"ARM",color:"#22c55e",fn:"armBridge"},{label:"DISARM",color:"#ef4444",fn:"disarmBridge"},{label:"LAND",color:"#f59e0b",fn:"landBridge"},{label:"RTL",color:"#f97316",fn:"rtlBridge"}]
                             delegate: Rectangle {

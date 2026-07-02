@@ -688,6 +688,8 @@ class SwarmContext(QObject):
         b = self._backend.get_backend(drone_id)
         if b:
             b.set_mode(mode)
+            self.modeChangeCommandSent.emit(drone_id, mode)
+            self.logMessage.emit("INFO", f"[{drone_id}] MODE -> {mode}")
 
     @Slot(str)
     def setModeAll(self, mode: str) -> None:
@@ -764,7 +766,11 @@ class SwarmContext(QObject):
         if b:
             b.drone_type = drone_type
             self.logMessage.emit("INFO", f"[{drone_id}] Typ gesetzt: {drone_type}")
-            self.telemetryUpdated.emit({})
+            # Include the new type in the snapshot so detect_capabilities()
+            # can read it without waiting for a full telemetry cycle.
+            snap = b.get_telemetry_snapshot() or {}
+            snap["droneType"] = drone_type
+            self.telemetryUpdated.emit(snap)
 
     @Slot(str, result=str)
     def droneRole(self, drone_id: str) -> str:
