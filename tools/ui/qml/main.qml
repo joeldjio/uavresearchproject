@@ -40,6 +40,7 @@ Window {
         { id: "experiment", svg: "experiment", label: "Scenario",  color: "#f59e0b", title: "Experiment" },
         { id: "flightlog",  svg: "log",        label: "FlightLog", color: "#a78bfa", title: "Flight Log" },
         { id: "log",        svg: "log",        label: "Log",       color: "#64748b", title: "System Log" },
+        { id: "sitl",       svg: "experiment", label: "SITL",      color: "#f97316", title: "ArduPilot SITL" },
         { id: "help",       svg: "log",        label: "Help",      color: "#fbbf24", title: "Help / Feature Reference" },
     ]
 
@@ -1028,7 +1029,8 @@ Window {
                                 var overrides = {
                                     "flightlog": "FlightLogPanel",
                                     "gimbal":    "GimbalPanel",
-                                    "ros2":      "ROS2Panel"
+                                    "ros2":      "ROS2Panel",
+                                    "sitl":      "SITLPanel"
                                 }
                                 var name = overrides[cfg.id] || (cfg.id.charAt(0).toUpperCase() + cfg.id.slice(1) + "Panel")
                                 return "panels/" + name + ".qml"

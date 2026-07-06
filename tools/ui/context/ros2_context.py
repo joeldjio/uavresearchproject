@@ -259,6 +259,10 @@ class ROS2Context(QObject):
         self._namespaces: Dict[str, str] = {}
         self._active_drone_ids: set = set()
         self._bridge_terminal_logs: Dict[str, Path] = {}
+        # True once setup.bash has been successfully sourced this session,
+        # OR if ROS2 was already available on startup (shell was pre-sourced).
+        # Prevents re-spawning a bash subprocess on every 2s nodeStatus() poll.
+        self._setup_sourced: bool = _ROS2_AVAILABLE
 
         # Poll timer — forward bridge telemetry to QML at 5 Hz.
         # Started lazily on first bridge start, stopped when last bridge stops.
@@ -773,10 +777,15 @@ class ROS2Context(QObject):
             # On Linux with ROS2, rclpy is only importable after setup.bash is
             # sourced. Try sourcing once per poll cycle so the status dot turns
             # green automatically when the user has configured setup files.
-            sources = self._ros2_setup_sources()
-            if sources:
-                self._apply_ros2_setup_environment(sources, "status_check")
-                _refresh_ros2_availability()
+            # Guard: only source if we haven't already successfully sourced this
+            # session — avoids spawning a bash subprocess every 2 s forever.
+            if not self._setup_sourced:
+                sources = self._ros2_setup_sources()
+                if sources:
+                    sourced = self._apply_ros2_setup_environment(sources, "status_check")
+                    if sourced:
+                        self._setup_sourced = True
+                    _refresh_ros2_availability()
             if not _ROS2_AVAILABLE:
                 return "no_ros2"
         if not _BRIDGE_AVAILABLE:

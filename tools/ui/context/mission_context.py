@@ -134,7 +134,11 @@ class MissionContext(QObject):
         # Mission lock state
         self._mission_locked = False
         self._poll_in_progress = False  # Gate to prevent concurrent polls
-        
+
+        # Explicit mission target drone IDs set by QML before upload/start.
+        # Empty list = fall back to all connected drones (legacy behaviour).
+        self._target_drone_ids: List[str] = []
+
         # Swarm context reference (injected via wire())
         self._swarm_context: Optional["SwarmContext"] = None
         
@@ -693,6 +697,42 @@ class MissionContext(QObject):
             return dict(uploaded) if uploaded else None
 
     @Slot()
+    @Slot(str)
+    def setTargetDroneIds(self, ids_json: str) -> None:
+        """
+        Set the list of drone IDs that upload/start/stop will act on.
+        Pass JSON array of strings, e.g. '["drone1","drone2"]'.
+        Pass '[]' or '' to reset to all-connected-drones fallback.
+        """
+        import json
+        try:
+            ids = json.loads(ids_json) if ids_json.strip() else []
+            self._target_drone_ids = [str(i) for i in ids if i]
+        except Exception:
+            self._target_drone_ids = []
+
+    def _get_target_drones(self) -> List[Tuple[str, Any]]:
+        """
+        Return list of (drone_id, backend) to act on.
+
+        Priority:
+          1. _target_drone_ids if non-empty — filter connected backends to that set
+          2. All connected backends (legacy fall-back)
+        """
+        if not self._swarm_context:
+            return []
+        backends = self._swarm_context.backend.all_backends()
+        connected = {
+            did: b for did, b in backends.items() if b.is_connected
+        }
+        if self._target_drone_ids:
+            return [
+                (did, connected[did])
+                for did in self._target_drone_ids
+                if did in connected
+            ]
+        return list(connected.items())
+
     def uploadMission(self):
         """Unified upload method - calls coverage, seeding, or solar based on mode."""
         if self._mission_mode == 1:
@@ -732,18 +772,9 @@ class MissionContext(QObject):
     def _mission_control_worker(self, action: str) -> None:
         import time
         try:
-            if not self._swarm_context:
-                self.logMessage.emit("ERROR", "[MISSION] SwarmContext not available")
-                return
-
-            backends = self._swarm_context.backend.all_backends()
-            connected = [
-                (drone_id, backend)
-                for drone_id, backend in backends.items()
-                if backend.is_connected
-            ]
+            connected = self._get_target_drones()
             if not connected:
-                self.logMessage.emit("ERROR", "[MISSION] No connected drones")
+                self.logMessage.emit("ERROR", "[MISSION] No target drones — select a drone first")
                 return
 
             success_count = 0
@@ -777,13 +808,18 @@ class MissionContext(QObject):
                             )
                             continue
 
-                        # ArduPilot only allows arming in GUIDED/STABILIZE, not AUTO/RTL.
-                        # Sequence: GUIDED → ARM → TAKEOFF → AUTO
+                        # ARM → TAKEOFF → AUTO.MISSION
+                        # ArduPilot: requires GUIDED mode before arming.
+                        # PX4: accepts arm from any mode; GUIDED switch must be skipped
+                        #      (PX4 ignores/rejects DO_SET_MODE GUIDED while disarmed).
+                        is_px4 = getattr(drone._conn.telemetry, "autopilot", "") == "px4"
+
                         if drone.altitude < 2.0:
-                            # 1. Switch to GUIDED first so arming is permitted
-                            self.logMessage.emit("INFO", f"[{drone_id}] 🔧 Switching to GUIDED...")
-                            if not drone.set_mode("GUIDED", timeout=5.0):
-                                self.logMessage.emit("WARN", f"[{drone_id}] ⚠ GUIDED mode failed, trying anyway...")
+                            # 1. Switch to GUIDED — ArduPilot only
+                            if not is_px4:
+                                self.logMessage.emit("INFO", f"[{drone_id}] 🔧 Switching to GUIDED...")
+                                if not drone.set_mode("GUIDED", timeout=5.0):
+                                    self.logMessage.emit("WARN", f"[{drone_id}] ⚠ GUIDED mode failed, trying anyway...")
 
                             # 2. ARM
                             if not drone.armed:
@@ -882,23 +918,9 @@ class MissionContext(QObject):
     def _upload_mission_worker(self, waypoints: List[Tuple[float, float, float]]) -> None:
         """Background worker for mission upload (runs in daemon thread)."""
         try:
-            if not self._swarm_context:
-                return
-            
-            # Get all connected drone backends
-            backends = self._swarm_context.backend.all_backends()
-            
-            # Filter to only selected drones (mission targets from AppState)
-            # For now, we'll upload to ALL connected drones
-            # TODO: Filter by AppState.missionTargets when QML integration is complete
-            target_drones = [
-                (drone_id, backend)
-                for drone_id, backend in backends.items()
-                if backend.is_connected
-            ]
-            
+            target_drones = self._get_target_drones()
             if not target_drones:
-                self.logMessage.emit("ERROR", "[MISSION] No connected drones found")
+                self.logMessage.emit("ERROR", "[MISSION] No target drones found — select a drone first")
                 return
             
             num_drones = len(target_drones)
@@ -1482,18 +1504,9 @@ class MissionContext(QObject):
     def _upload_seeding_mission_worker(self, waypoints: List[Waypoint]) -> None:
         """Background worker for seeding mission upload."""
         try:
-            if not self._swarm_context:
-                return
-            
-            backends = self._swarm_context.backend.all_backends()
-            target_drones = [
-                (drone_id, backend)
-                for drone_id, backend in backends.items()
-                if backend.is_connected
-            ]
-            
+            target_drones = self._get_target_drones()
             if not target_drones:
-                self.logMessage.emit("ERROR", "[SEEDING] No connected drones")
+                self.logMessage.emit("ERROR", "[SEEDING] No target drones — select a drone first")
                 return
             
             self.logMessage.emit(
@@ -2067,18 +2080,9 @@ class MissionContext(QObject):
     def _upload_solar_mission_worker(self, waypoints: List[Waypoint]) -> None:
         """Background worker for solar mission upload."""
         try:
-            if not self._swarm_context:
-                return
-            
-            backends = self._swarm_context.backend.all_backends()
-            target_drones = [
-                (drone_id, backend)
-                for drone_id, backend in backends.items()
-                if backend.is_connected
-            ]
-            
+            target_drones = self._get_target_drones()
             if not target_drones:
-                self.logMessage.emit("ERROR", "[SOLAR] No connected drones")
+                self.logMessage.emit("ERROR", "[SOLAR] No target drones — select a drone first")
                 return
             
             self.logMessage.emit(

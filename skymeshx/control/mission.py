@@ -382,11 +382,14 @@ class MissionEngine:
             else:
                 # Use snapshot instead of self._waypoints
                 wp = self._upload_waypoints[seq - 1]
+                # MAV_FRAME_GLOBAL_RELATIVE_ALT (6): alt is metres above home.
+                # This is required for PX4 (frame 3 = GLOBAL absolute MSL is rejected).
+                # ArduPilot also accepts frame 6 for relative-alt missions.
                 mav.mav.mission_item_int_send(
                     mav.target_system,
                     mav.target_component,
                     seq,
-                    3,
+                    6,  # MAV_FRAME_GLOBAL_RELATIVE_ALT
                     wp.cmd,
                     0,
                     1,

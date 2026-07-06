@@ -36,6 +36,7 @@ class SwarmContext(QObject):
     connectedChanged = Signal(str, bool, arguments=["droneId", "connected"])
     fsmStateChanged = Signal(str, str, arguments=["droneId", "fsmState"])
     countsChanged = Signal()
+    paramsLoaded = Signal(str, str, arguments=["droneId", "paramsJson"])
 
     # Swarm Algorithms signals
     formationUpdated = Signal(str, "QVariant", arguments=["leaderId", "positions"])
@@ -241,6 +242,56 @@ class SwarmContext(QObject):
         b = self._backend.get_backend(drone_id)
         if b:
             b.goto(lat, lon, alt)
+
+    @Slot(str)
+    def fetchParams(self, drone_id: str) -> None:
+        """Fetch all MAVLink parameters from a connected drone in a background thread.
+
+        Emits paramsLoaded(drone_id, json_str) when done.
+        json_str is a JSON object mapping param name → value (float), or "{}" on error.
+        """
+        import json
+
+        b = self._backend.get_backend(drone_id)
+        if not b or not b.is_connected:
+            self.logMessage.emit("WARN", f"[{drone_id}] fetchParams: drone not connected")
+            self.paramsLoaded.emit(drone_id, "{}")
+            return
+
+        backend = b  # capture for thread
+
+        def _run():
+            if not hasattr(backend, "fetch_all_params"):
+                self.paramsLoaded.emit(drone_id, "{}")
+                return
+            self.logMessage.emit("INFO", f"[{drone_id}] 📋 Fetching parameters…")
+            params = backend.fetch_all_params(timeout=15.0)
+            self.logMessage.emit("INFO", f"[{drone_id}] ✅ {len(params)} params loaded")
+            self.paramsLoaded.emit(drone_id, json.dumps(params))
+
+        threading.Thread(target=_run, daemon=True, name=f"fetch-params-{drone_id}").start()
+
+    @Slot(str, str, float)
+    def setDroneParam(self, drone_id: str, name: str, value: float) -> None:
+        """Send PARAM_SET to a connected drone via MAVLink.
+
+        Args:
+            drone_id: Target drone identifier.
+            name:     MAVLink parameter name (e.g. "SIM_SPEEDUP").
+            value:    New value as float.
+        """
+        b = self._backend.get_backend(drone_id)
+        if not b or not b.is_connected:
+            self.logMessage.emit("WARN", f"[{drone_id}] setDroneParam: drone not connected")
+            return
+        if not hasattr(b, "set_live_param"):
+            self.logMessage.emit("WARN", f"[{drone_id}] setDroneParam: backend has no set_live_param")
+            return
+        ok = b.set_live_param(name, value)
+        if ok:
+            self.logMessage.emit("INFO", f"[{drone_id}] ✏️  {name} = {value}")
+        else:
+            self.logMessage.emit("ERROR", f"[{drone_id}] setDroneParam failed: {name}")
 
     @Slot(str, float, float, float)
     def smartGotoDrone(self, drone_id: str, lat: float, lon: float, alt: float) -> None:
@@ -727,16 +778,19 @@ class SwarmContext(QObject):
         if not drone_id:
             self.logMessage.emit("WARNING", "[SWARM] No drone ID provided for E-STOP")
             return
-        
+
+        # Cancel the sequential-GOTO mission thread (sets cancel_event)
+        self.cancelMission(drone_id)
+
         b = self._backend.get_backend(drone_id)
         if not b:
             self.logMessage.emit("WARNING", f"[{drone_id}] Backend not found")
             return
-        
-        # Stop any running mission
+
+        # Stop any native mission engine as well
         if hasattr(b, 'mission_engine') and b.mission_engine:
             b.mission_engine.clear()
-        
+
         # Execute RTL
         if b.is_connected:
             b.rtl()
@@ -770,7 +824,7 @@ class SwarmContext(QObject):
             # can read it without waiting for a full telemetry cycle.
             snap = b.get_telemetry_snapshot() or {}
             snap["droneType"] = drone_type
-            self.telemetryUpdated.emit(snap)
+            self.telemetryUpdated.emit({drone_id: snap})
 
     @Slot(str, result=str)
     def droneRole(self, drone_id: str) -> str:

@@ -158,6 +158,11 @@ def build_default_locator(app=None) -> ServiceLocator:
 
         return VideoStreamContext()
 
+    def _sitl():
+        from tools.ui.context.sitl_context import SITLContext
+
+        return SITLContext()
+
     loc.register_factory("swarm", _swarm)
     loc.register_factory("telemetryModel", _telemetry)
     loc.register_factory("experiment", _experiment)
@@ -172,6 +177,7 @@ def build_default_locator(app=None) -> ServiceLocator:
     loc.register_factory("updater", _updater)
     loc.register_factory("licenseManager", _license)
     loc.register_factory("videoStream", _video_stream)
+    loc.register_factory("sitl", _sitl)
     return loc
 
 
@@ -192,6 +198,7 @@ def wire(locator: ServiceLocator) -> None:
     ros2 = locator["ros2"]
     bag_playback = locator["bagPlayback"]
     escape = locator["escape"]
+    sitl = locator["sitl"]
     
     # Inject swarm context into mission context for mission upload
     mission.set_swarm_context(swarm)
@@ -367,3 +374,16 @@ def wire(locator: ServiceLocator) -> None:
 
     # VideoStream logs → swarm log
     video_stream.logMessage.connect(swarm.logMessage)
+
+    # SITL logs → swarm log
+    sitl.logMessage.connect(swarm.logMessage)
+
+    # SITL auto-connect: when SITL/Swarm starts, add drones to swarm automatically
+    def _on_sitl_auto_connect(connections: list) -> None:
+        for entry in connections:
+            drone_id = entry.get("id", "")
+            conn_str = entry.get("connection_string", "")
+            if drone_id and conn_str:
+                swarm.addDrone(drone_id, conn_str)
+
+    sitl.autoConnectReady.connect(_on_sitl_auto_connect)
