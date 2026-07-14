@@ -14,12 +14,15 @@ SkyMeshX combines a Python SDK, a PySide6/QML ground control station, MAVLink co
 
 ## Highlights
 
-- **Ground control station**: PySide6/QML UI with dashboard, map, swarm, mission, safety, gimbal/camera, ROS2, flight log, and help panels.
+- **Ground control station**: PySide6/QML UI with dashboard, map, swarm, mission, safety, gimbal/camera, ROS2, SITL, flight log, and help panels.
 - **Core drone SDK**: `Drone` and `Swarm` APIs for MAVLink endpoints over TCP, UDP, serial, and COM ports.
 - **Mission planning**: manual waypoint missions, field coverage, seeding missions with servo/dispenser commands, and solar inspection with camera/gimbal trigger metadata.
 - **Explicit mission execution**: upload and start are separate actions; upload clears/adds/uploads the mission, while `Start Mission` explicitly arms/takes off/starts.
 - **Swarm coordination**: multi-drone management, formations, leader/follower workflows, distributed allocation, and APF-aware movement.
 - **Safety systems**: APF collision avoidance, collision prediction, battery monitoring, geofence support, and mission validation.
+- **ArduPilot SITL panel**: full SITL lifecycle from the GCS — build, configure, launch, stop, parameter management, peripheral devices, swarm spin-up, MAVProxy quick-fixes, and Gazebo sensor integration.
+- **Gazebo sensor overlays**: in-process `gz.transport13` subscriptions render live LiDAR (polar plot) and Optical Flow frames directly onto the map as PIP overlays — no extra windows.
+- **Gazebo → MAVLink sensor bridge**: `gazebo_mavlink_sensor_bridge.py` forwards `OPTICAL_FLOW_RAD`, `DISTANCE_SENSOR`, and `OBSTACLE_DISTANCE` to ArduPilot from Gazebo sensors; works for SITL and real hardware.
 - **PX4 + ROS2**: uXRCE-DDS bridge, PX4 topic discovery/health, mission upload/monitoring, frame conversions, bag recording, SITL launch controls, and Gazebo world/model profiles.
 - **Camera and gimbal workflows**: camera context, observation UAV model hooks, thermal settings, video stream status, and optional live frames through the UI.
 - **Traceability**: trace bundles, mission/WP tracking, ROS2 topic health exports, flight logs, JSONL/CSV telemetry logs, and ROS2 bag workflows.
@@ -294,17 +297,34 @@ python -m tools.ui
 Main UI areas:
 
 - **Dashboard**: selected drone status, telemetry, and quick actions.
-- **Map**: Leaflet-based map, drone markers, paths, boundaries, mission overlays, seeding drops, solar rows, and optional video PIP.
+- **Map**: Leaflet-based map, drone markers, paths, boundaries, mission overlays, seeding drops, solar rows, optional video PIP, and live LiDAR/Flow sensor overlays.
 - **Mission**: manual waypoints, coverage missions, seeding wizard, solar inspection wizard, upload/start/pause/abort controls.
 - **Swarm**: drone selection, formation controls, multi-vehicle state, and coordination helpers.
 - **Safety**: APF, collision, battery, and safety feedback.
-- **Gimbal/Camera**: camera controls, gimbal commands, stream start/stop, thermal settings, and observation UAV hooks.
+- **Gimbal/Camera**: camera controls, gimbal commands, stream start/stop, thermal settings, sensor bridge (Gazebo→MAVLink), and observation UAV hooks.
+- **SITL**: full ArduPilot SITL lifecycle — build, configure vehicle/frame/location, launch sim, stop, Swarm spin-up, MAVProxy quick-fixes, parameter management, Gazebo integration with LiDAR/Flow overlays and sensor bridge.
 - **ROS2**: PX4 bridge, SITL launcher, topic browser, bag recorder, video stream controls, debug/trace tooling.
 - **Flight Log**: CSV and ROS2 bag playback workflows.
 
 See [docs/ui/ui-user-guide.md](docs/ui/ui-user-guide.md).
 
-## PX4, Gazebo, ROS2, and Video
+## ArduPilot SITL, Gazebo, and Sensor Bridge
+
+SkyMeshX includes a complete ArduPilot SITL workflow integrated into the GCS:
+
+- **SITL panel** (Tab "SITL") with sub-tabs: Setup & Build, Sim starten, Swarm, Parameter, Gazebo, Debug.
+- Vehicle/frame/location/speedup dropdowns; TCP and UDP GCS connection modes.
+- Peripheral device catalogue (GPS, LiDAR, optical flow, rangefinder, camera, beacon).
+- Auto-connect after SITL starts (configurable).
+- MAVProxy quick-fix cards (PreArm fixes, arming checks, guided/takeoff sequences).
+- Parameter tab: known `SIM_*` parameters with live editing via MAVProxy one-shot.
+- **Gazebo tab**: LiDAR viewer, Optical Flow viewer, sensor stream monitor, GStreamer stream routing.
+- **Live overlays on the map**: in-process `gz.transport13` subscriptions push LiDAR (polar plot, 300×300) and Optical Flow (320×240) frames directly onto the map as PIP images — toggle per sensor, no extra windows.
+- **Gazebo → MAVLink sensor bridge** (`tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py`): sends `OPTICAL_FLOW_RAD`, `DISTANCE_SENSOR`, and `OBSTACLE_DISTANCE` to ArduPilot; headless, SIGTERM-safe, works for SITL and real hardware.
+- One-click parameter apply (`FLOW_TYPE=5`, `RNGFND1_TYPE=10`, `RNGFND1_ORIENT=25`, `PRX1_TYPE=2`, `AVOID_ENABLE=7`, `AVOID_MARGIN=2`) from the Sensor Bridge section.
+- Bridge status LED (green/red, 1.5 s polling) and EKF Non-GPS hint block.
+
+## PX4, ROS2, and Video
 
 SkyMeshX includes active support for Linux-based PX4 simulation workflows:
 
@@ -324,6 +344,7 @@ Useful docs:
 - [Frame conventions](docs/setup/frame-conventions.md)
 - [SITL camera stream test checklist](docs/testing/sitl-camera-stream.md)
 - [SITL bag workflow](docs/testing/sitl-bag-workflow.md)
+- [Gazebo Sensor Bridge](docs/features/gazebo-sensor-bridge.md)
 
 ## Testing
 
@@ -352,6 +373,8 @@ The default suite is designed to run without real MAVLink, ROS2, PX4, Gazebo, ca
 | UI user guide | [docs/ui/ui-user-guide.md](docs/ui/ui-user-guide.md) |
 | Installation | [docs/setup/installation.md](docs/setup/installation.md) |
 | PX4 SITL | [docs/setup/px4-sitl.md](docs/setup/px4-sitl.md) |
+| **Gazebo Sensor Bridge** | [docs/features/gazebo-sensor-bridge.md](docs/features/gazebo-sensor-bridge.md) |
+| **Release Notes v0.4.0** | [docs/release/notes-v0.4.0.md](docs/release/notes-v0.4.0.md) |
 | Field coverage | [docs/features/field-coverage-planning.md](docs/features/field-coverage-planning.md) |
 | Seeding missions | [docs/features/seeding-mission-planner.md](docs/features/seeding-mission-planner.md) |
 | Seeding SITL checklist | [docs/testing/sitl-seeding-mission.md](docs/testing/sitl-seeding-mission.md) |
@@ -374,6 +397,6 @@ See:
 
 ## Project Status
 
-SkyMeshX is alpha-stage research software. The core APIs, hardware-free tests, safety primitives, seeding previews, solar inspection previews, and many UI workflows are usable, while PX4/Gazebo simulation, camera/video, mission execution validation, and advanced trace workflows are under active development.
+SkyMeshX is alpha-stage research software. The core APIs, hardware-free tests, safety primitives, seeding/solar planners, and the SITL/Gazebo sensor bridge are usable. ArduPilot SITL with live sensor overlays (LiDAR, Optical Flow) and the Gazebo→MAVLink bridge are production-ready for simulation; hardware sensor bridge testing is ongoing.
 
 Repository: <https://github.com/joeldjio/skymeshx>

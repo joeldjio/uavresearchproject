@@ -456,3 +456,122 @@ if not mission.upload():
 - [Control API](control.md) - Mission planning
 - [Safety API](safety.md) - Collision avoidance
 - [Swarm Coordination](../features/swarm-coordination.md) - Multi-drone features
+
+---
+
+## SITLContext
+
+QML-Bridge für den ArduPilot-SITL-Lebenszyklus. Registriert als `sitl` Context-Property.
+
+```python
+# Nur intern — wird in tools/ui/app.py registriert:
+# engine.rootContext().setContextProperty("sitl", sitl_context)
+```
+
+### SITL Lebenszyklus
+
+| Slot | Rückgabe | Beschreibung |
+|---|---|---|
+| `launchSimVehicle(json)` | — | Startet SITL-Terminal (`sim_vehicle.py`) |
+| `launchSwarm(json)` | — | Startet mehrere SITL-Instanzen |
+| `stopAll()` | — | SIGTERM alle Prozesse + Overlays zurücksetzen |
+| `stopViewers()` | — | SIGTERM alle Viewer-Prozesse |
+| `isRunning()` | `bool` | True wenn SITL läuft |
+| `sitlStatus()` | `str` | `"stopped"\|"starting"\|"running"\|"error"` |
+| `runningInstances()` | `QVariantList` | `[{index, vehicle, port, started}]` |
+
+### Build
+
+| Slot | Parameter | Beschreibung |
+|---|---|---|
+| `runBuild(board, vehicle)` | `str, str` | `./waf configure && ./waf <vehicle>` |
+| `runClean()` | — | `./waf clean` |
+| `runDistclean()` | — | `./waf distclean` |
+
+### Gazebo-Viewer
+
+| Slot | Parameter | Beschreibung |
+|---|---|---|
+| `launchLidarViewer(topic)` | `str` | Startet `lidar_viewer.py` direkt |
+| `launchFlowViewer(topic)` | `str` | Startet `flow_viewer.py` direkt |
+| `setSensorOverlay(type, visible)` | `str, bool` | `"lidar"\|"flow"` Karten-Overlay |
+| `getBridgeStatus()` | `str` | `"stopped"\|"running"\|"error"` |
+| `getBridgeParamList()` | `QVariantList` | `[{name, value}]` |
+| `launchSensorBridge(config_json)` | `str` | Startet Gazebo→MAVLink Bridge |
+| `stopSensorBridge()` | — | SIGTERM Bridge |
+| `applyBridgeParams(master)` | `str` | Alle Bridge-Parameter per MAVProxy One-Shot |
+
+**Bridge-Config-JSON:**
+```json
+{
+  "mavlink":      "udpin:0.0.0.0:14550",
+  "camera_topic": "/flow_camera/image",
+  "lidar_topic":  "/lidar/scan"
+}
+```
+
+### Parameter
+
+| Slot | Parameter | Beschreibung |
+|---|---|---|
+| `setParam(name, value)` | `str, str` | Einzelnen Parameter setzen |
+| `getKnownParams()` | `str` | JSON-Liste aller SIM_*-Parameter |
+| `getPreArmFixes()` | `QVariantList` | Liste der Fix-Karten |
+| `launchMavproxyFix(fix_id, master)` | `str, str` | Fix per MAVProxy ausführen |
+| `applyBridgeParams(master)` | `str` | Bridge-Parameter setzen (8 Params) |
+
+### Signale
+
+| Signal | Payload | Beschreibung |
+|---|---|---|
+| `sitlStatusChanged` | `str` | Status geändert |
+| `sitlLogLine` | `str` | Log-Zeile für das Konsolen-Panel |
+| `sitlInstancesChanged` | — | Instanzliste geändert |
+| `gazeboStatusChanged` | `str` | Gazebo-Status |
+| `sensorOverlayToggled` | `str, bool` | Overlay-Sichtbarkeit geändert |
+| `lidarFrameReady` | `str` | Base64-JPEG für LiDAR-Overlay |
+| `flowFrameReady` | `str` | Base64-JPEG für Flow-Overlay |
+
+### _BRIDGE_PARAMS (Klassenattribut)
+
+```python
+SITLContext._BRIDGE_PARAMS = {
+    "FLOW_TYPE":       "5",    # MAVLink Optical Flow
+    "RNGFND1_TYPE":   "10",    # MAVLink Rangefinder
+    "RNGFND1_MIN_CM":  "5",
+    "RNGFND1_MAX_CM": "3000",
+    "RNGFND1_ORIENT": "25",    # nach unten (PITCH_270)
+    "PRX1_TYPE":       "2",    # MAVLink Proximity
+    "AVOID_ENABLE":    "7",
+    "AVOID_MARGIN":    "2",
+}
+```
+
+---
+
+## GazeboMavlinkSensorBridge
+
+Standalone-Skript `tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py`.
+
+```bash
+python3 gazebo_mavlink_sensor_bridge.py [--mavlink CONN] [--camera-topic TOPIC] \
+    [--lidar-topic TOPIC] [--no-display]
+```
+
+| Argument | Standard | Beschreibung |
+|---|---|---|
+| `--mavlink` | `udpin:0.0.0.0:14550` | MAVLink-Verbindung (UDP, TCP, Serial) |
+| `--camera-topic` | `/flow_camera/image` | Gazebo Kamera-Topic |
+| `--lidar-topic` | `/lidar/scan` | Gazebo LiDAR-Topic |
+| `--no-display` | false | Headless — keine OpenCV-Fenster |
+
+**MAVLink-Ausgaben:**
+
+| Nachricht | Frequenz | ArduPilot-Param |
+|---|---|---|
+| `OPTICAL_FLOW_RAD` | Kameratakt | `FLOW_TYPE=5` |
+| `DISTANCE_SENSOR` | Kameratakt | `RNGFND1_TYPE=10` |
+| `OBSTACLE_DISTANCE` | ~10 Hz | `PRX1_TYPE=2` |
+
+Vollständige Dokumentation: [docs/features/gazebo-sensor-bridge.md](../features/gazebo-sensor-bridge.md)
+

@@ -638,4 +638,92 @@ Invalid transitions are rejected and logged. The `rejected_count` counter increm
 
 ---
 
+## 13. SITL-Tab
+
+Der SITL-Tab steuert den gesamten ArduPilot-SITL-Lebenszyklus.
+
+### Sub-Tabs
+
+#### Setup & Build
+Verwaltet das ArduPilot-Repository und Build.
+- **Repository-Pfad**: Pfad zum ArduPilot-Verzeichnis.
+- **Board** + **Fahrzeug**: Ziel für `./waf configure && ./waf <vehicle>`.
+- **▶ Build** / **Clean** / **Distclean**: öffnen jeweils ein Terminal.
+
+#### Sim starten
+Konfiguriert und startet eine einzelne SITL-Instanz.
+- **Fahrzeug**: ArduCopter, ArduPlane, ArduRover, ArduSub, ArduHeli, …
+- **Rahmentyp**: alle Frames des gewählten Fahrzeugs.
+- **Standort**: Simulationsstandort aus über 100 verfügbaren Orten.
+- **Geschwindigkeit**: 1×–10× Speedup.
+- **GCS-Verbindung**: TCP (Port 5760) oder UDP.
+- **Peripheriegeräte**: aktivierbare Geräte mit automatischen Parameterüberschreibungen.
+- **▶ Simulation starten** / **■ Stoppen**.
+
+#### Swarm
+Gleich wie „Sim starten", aber für mehrere Instanzen gleichzeitig (2–20 Drohnen).
+
+#### Parameter
+Live-Parameterverwaltung für laufende SITL-Instanz.
+- Tabelle bekannter `SIM_*`-Parameter mit Wert und Einheit.
+- Klick auf einen Wert → Inline-Editing → per MAVProxy One-Shot gesetzt.
+
+#### Gazebo
+
+| Element | Beschreibung |
+|---|---|
+| **LIDAR (gz.transport)** | Topic-Eingabe, „Auf Karte zeigen"-Toggle, „▶ OpenCV Fenster"-Button |
+| **OPTICAL FLOW** | Gleich wie LiDAR |
+| **Stop Viewers** | Beendet alle laufenden Viewer-Prozesse |
+| **Karten-Overlay-Buttons** | Zeigen Live-Frames direkt als PIP auf der Karte an |
+| **GStreamer-Streaming** | UDP-Port, Stream in GCS anzeigen oder GSt-Terminal öffnen |
+
+#### Debug
+
+| Element | Beschreibung |
+|---|---|
+| **MAVProxy starten** | Adresse, `--map`, `--console` |
+| **Joystick laden** | MAVProxy mit Joystick-Modul |
+| **PREARM FIXES** | Quick-Fix-Karten (Frame Class, Accel, Compass, Arming Checks, Takeoff) |
+
+---
+
+## 14. Sensor Bridge (Gimbal-Tab)
+
+Am Ende des **Gimbal-Tabs** befindet sich der Bereich **SENSOR BRIDGE — GAZEBO → ARDUPILOT**.
+
+### Wozu?
+
+Die Bridge sendet Optical Flow und LiDAR-Hindernisdaten per MAVLink an ArduPilot. ArduPilot kann damit:
+- **Optical Flow**: Position ohne GPS halten (`FLOW_TYPE=5`, `EK3_SRC1_VELXY=5`).
+- **LiDAR**: Hindernisse erkennen und ausweichen (`PRX1_TYPE=2`, `AVOID_ENABLE=7`).
+
+### Verwendung
+
+1. Gazebo-Simulation starten (SITL-Tab → Gazebo).
+2. **Gimbal-Tab** öffnen → Bereich **SENSOR BRIDGE**.
+3. MAVLink-Adresse, Kamera- und LiDAR-Topic eingeben.
+4. **⚙ Parameter setzen** klicken → ArduPilot startet neu.
+5. **▶ Bridge starten** klicken → Status-LED wird grün.
+
+| Kontrolle | Beschreibung |
+|---|---|
+| **MAVLink** | Verbindungsstring (Standard: `udpin:0.0.0.0:14550`) |
+| **Kamera-Topic** | Gazebo-Topic für Optical Flow (Standard: `/flow_camera/image`) |
+| **LiDAR-Topic** | Gazebo-Topic für LiDAR (Standard: `/lidar/scan`) |
+| **⚙ Parameter setzen** | Setzt alle 8 Bridge-Parameter per MAVProxy One-Shot |
+| **▶ Bridge starten** | Startet `gazebo_mavlink_sensor_bridge.py` direkt |
+| **■ Stoppen** | Beendet die Bridge (SIGTERM) |
+| **Status-LED** | Grün = aktiv, Rot = Fehler, Grau = gestoppt |
+
+### Live-Overlays auf der Karte
+
+Wenn ein Sensor-Overlay aktiviert ist (SITL-Tab → Gazebo → „Auf Karte zeigen"), erscheint auf der Karte:
+- **LiDAR-Polarplot** (links unten): Obstacles als Punkte, Abstands-Gitterlinien.
+- **Optical-Flow-Bild** (links unten, rechts vom LiDAR): Kamerabild mit Flow-Vektorpfeilen.
+
+Klick auf den Overlay oder Toggle-Button schließt ihn wieder.
+
+---
+
 *SkyMeshX GCS v0.4.0 · docs/ui/ui-user-guide.md*
