@@ -15,6 +15,11 @@ Item {
     property int size: 80
     property bool showLabel: true
 
+    // Internal smoothed heading drives the visual — avoids animation stacking
+    // when new values arrive faster than the animation completes.
+    property real _smoothHeading: 0.0
+    onHeadingChanged: _smoothHeading = heading
+
     // Dark circular background
     Rectangle {
         id: compassBg
@@ -32,7 +37,7 @@ Item {
             anchors.centerIn: parent
             width: parent.width
             height: parent.height
-            rotation: -root.heading // Rotate opposite to heading so N stays at top
+            rotation: -root._smoothHeading
 
             // Cardinal direction markers
             Repeater {
@@ -146,10 +151,10 @@ Item {
         }
     }
 
-    // Smooth rotation animation
-    Behavior on heading {
+    // Smooth rotation — applied to the internal display property only
+    Behavior on _smoothHeading {
         RotationAnimation {
-            duration: 200
+            duration: 180
             direction: RotationAnimation.Shortest
         }
     }

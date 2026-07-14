@@ -254,19 +254,22 @@ class MAVLinkConnection:
             return False
         self._stop.clear()
         try:
-            # For Windows COM ports, pymavlink needs baud as separate parameter
+            # autoreconnect=False: our own _reconnect_loop handles backoff
+            # reconnection. pymavlink's built-in autoreconnect runs on the
+            # recv thread and prints "EOF on TCP socket" / "sleeping" to
+            # stdout, causing the buffered-writer crash at interpreter shutdown.
             if self._baud is not None:
                 self._mav = mavutil.mavlink_connection(
                     self.connection_string,
                     baud=self._baud,
                     source_system=self.source_system,
-                    autoreconnect=True,
+                    autoreconnect=False,
                 )
             else:
                 self._mav = mavutil.mavlink_connection(
                     self.connection_string,
                     source_system=self.source_system,
-                    autoreconnect=True,
+                    autoreconnect=False,
                 )
             hb = self._mav.wait_heartbeat(timeout=timeout)
             if hb is None:
@@ -603,7 +606,7 @@ class MAVLinkConnection:
                 self._mav = mavutil.mavlink_connection(
                     self.connection_string,
                     source_system=self.source_system,
-                    autoreconnect=True,
+                    autoreconnect=False,
                 )
                 hb = self._mav.wait_heartbeat(timeout=10.0)
                 if hb is None:

@@ -124,6 +124,14 @@ class DroneBackend(QObject):
     def connect(self) -> None:
         """Connect to the drone (blocking — run in a background thread)."""
         _ensure_sdk_loaded()
+        # Tear down any previous drone object so its TCP socket is released
+        # before we try to open a new connection to the same address.
+        if self._drone is not None:
+            try:
+                self._drone.disconnect()
+            except Exception:
+                pass
+            self._drone = None
         try:
             # Prefer typed models (FSM-aware) if available
             if (
@@ -310,12 +318,17 @@ class DroneBackend(QObject):
 
     def get_camera_status(self) -> dict:
         if self._drone and hasattr(self._drone, "get_camera_status"):
-            return self._drone.get_camera_status()
-        return {
-            "streamActive": False,
-            "recordingActive": False,
-            "backendAvailable": self._drone is not None,
-        }
+            status = self._drone.get_camera_status()
+        else:
+            status = {
+                "streamActive": False,
+                "recordingActive": False,
+                "backendAvailable": self._drone is not None,
+            }
+        # Always include droneType so detect_capabilities() can read it
+        # from this dict without needing a second get_telemetry_snapshot() call.
+        status.setdefault("droneType", self.drone_type)
+        return status
 
     def set_swarm_role(self, role: str, leader_id: str = "") -> None:
         self.swarm_role = role

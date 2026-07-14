@@ -733,6 +733,7 @@ class MissionContext(QObject):
             ]
         return list(connected.items())
 
+    @Slot()
     def uploadMission(self):
         """Unified upload method - calls coverage, seeding, or solar based on mode."""
         if self._mission_mode == 1:
@@ -768,6 +769,75 @@ class MissionContext(QObject):
             args=("abort",),
             daemon=True
         ).start()
+
+    def _auto_start_drone(self, drone_id: str, backend: Any, mission_mode: int) -> bool:
+        """
+        Arm → Takeoff → AUTO for one drone immediately after a successful upload.
+
+        Drone state branching:
+          - Already airborne (alt >= 2 m)  → set AUTO only
+          - Armed but on ground             → takeoff then AUTO
+          - Disarmed on ground              → GUIDED (ArduPilot only) → arm → takeoff → AUTO
+
+        Returns True if AUTO mode was successfully set.
+        """
+        import time
+
+        drone = getattr(backend, "_drone", None)
+        if not drone:
+            self.logMessage.emit("WARN", f"[{drone_id}] No drone object — cannot auto-start")
+            return False
+
+        is_px4 = getattr(drone._conn.telemetry, "autopilot", "") == "px4"
+
+        if drone.altitude >= 2.0:
+            # Already airborne — switch to AUTO directly
+            self.logMessage.emit("INFO", f"[{drone_id}] 🛫 Already airborne — starting mission (AUTO)...")
+        else:
+            # On the ground — need to arm and take off first
+            if not drone.armed:
+                # 1. GUIDED mode (ArduPilot only — PX4 rejects DO_SET_MODE while disarmed)
+                if not is_px4:
+                    self.logMessage.emit("INFO", f"[{drone_id}] 🔧 Switching to GUIDED...")
+                    if not drone.set_mode("GUIDED", timeout=5.0):
+                        self.logMessage.emit("WARN", f"[{drone_id}] ⚠ GUIDED mode failed, trying anyway...")
+
+                # 2. ARM
+                self.logMessage.emit("INFO", f"[{drone_id}] 🔧 Arming...")
+                if not drone.arm(timeout=10.0):
+                    self.logMessage.emit("ERROR", f"[{drone_id}] ❌ Arm failed — mission not started")
+                    return False
+                self.logMessage.emit("INFO", f"[{drone_id}] ✅ Armed")
+            else:
+                self.logMessage.emit("INFO", f"[{drone_id}] Already armed — proceeding to takeoff")
+
+            # 3. TAKEOFF
+            if mission_mode == 1:
+                takeoff_alt = self._seed_altitude
+            elif mission_mode == 2:
+                takeoff_alt = self._solar_altitude
+            else:
+                takeoff_alt = self._coverage_altitude
+            self.logMessage.emit("INFO", f"[{drone_id}] 🚁 Taking off to {takeoff_alt}m...")
+            if not drone.takeoff(altitude=takeoff_alt, timeout=30.0):
+                self.logMessage.emit("WARN", f"[{drone_id}] ⚠ Takeoff timed out — attempting AUTO anyway...")
+            else:
+                self.logMessage.emit("INFO", f"[{drone_id}] ✅ Airborne")
+                time.sleep(1.0)  # brief settle
+
+        # 4. SET AUTO
+        self.logMessage.emit("INFO", f"[{drone_id}] 🎯 Starting mission (AUTO)...")
+        ok = drone.set_mode("AUTO", timeout=5.0)
+        if ok:
+            self.logMessage.emit("INFO", f"[{drone_id}] ✅ Mission started!")
+            if self._swarm_context is not None:
+                with self._swarm_context._state_lock:
+                    if drone_id not in self._swarm_context._mission_active:
+                        self._swarm_context._mission_active[drone_id] = threading.Event()
+                    self._swarm_context._mission_active[drone_id].clear()
+        else:
+            self.logMessage.emit("WARN", f"[{drone_id}] ⚠ Could not set AUTO mode")
+        return ok
 
     def _mission_control_worker(self, action: str) -> None:
         import time
@@ -1025,9 +1095,13 @@ class MissionContext(QObject):
                         f"[{drone_id}] ✅ Mission uploaded ({len(drone_waypoints)} waypoints)"
                     )
                     
-                    # Upload only — execution is triggered explicitly via startMission()
                     self._mark_mission_uploaded(drone_id, 0, len(drone_waypoints))
-                    success_count += 1
+                    # Auto-start: arm/takeoff/AUTO based on current drone state
+                    started = self._auto_start_drone(drone_id, backend, 0)
+                    if started:
+                        success_count += 1
+                    else:
+                        success_count += 1  # Upload succeeded; start failure is non-fatal
                 
                 except Exception as e:
                     self.logMessage.emit(
@@ -1038,7 +1112,7 @@ class MissionContext(QObject):
             if success_count > 0:
                 self.logMessage.emit(
                     "INFO",
-                    f"[MISSION] ✅ Upload complete: {success_count}/{len(target_drones)} drone(s). Press Start Mission to execute."
+                    f"[MISSION] ✅ Upload complete: {success_count}/{len(target_drones)} drone(s) — mission auto-started."
                 )
             else:
                 self.logMessage.emit(
@@ -1564,8 +1638,9 @@ class MissionContext(QObject):
                         f"[{drone_id}] ✅ Seeding mission uploaded ({len(waypoints)} WP)"
                     )
                     
-                    # Upload only — execution is triggered explicitly via startMission()
                     self._mark_mission_uploaded(drone_id, 1, len(waypoints))
+                    # Auto-start: arm/takeoff/AUTO based on current drone state
+                    self._auto_start_drone(drone_id, backend, 1)
                     success_count += 1
                 
                 except Exception as e:
@@ -1574,7 +1649,7 @@ class MissionContext(QObject):
             if success_count > 0:
                 self.logMessage.emit(
                     "INFO",
-                    f"[SEEDING] ✅ Upload complete: {success_count}/{len(target_drones)} drone(s). Press Start Mission to execute."
+                    f"[SEEDING] ✅ Upload complete: {success_count}/{len(target_drones)} drone(s) — mission auto-started."
                 )
             else:
                 self.logMessage.emit("ERROR", "[SEEDING] ❌ All uploads failed")
@@ -2140,8 +2215,9 @@ class MissionContext(QObject):
                         f"[{drone_id}] ✅ {len(waypoints)} waypoints uploaded"
                     )
                     
-                    # Upload only — execution is triggered explicitly via startMission()
                     self._mark_mission_uploaded(drone_id, 2, len(waypoints))
+                    # Auto-start: arm/takeoff/AUTO based on current drone state
+                    self._auto_start_drone(drone_id, backend, 2)
                     success_count += 1
                 
                 except Exception as e:
@@ -2150,7 +2226,7 @@ class MissionContext(QObject):
             if success_count > 0:
                 self.logMessage.emit(
                     "INFO",
-                    f"[SOLAR] ✅ Upload complete: {success_count}/{len(target_drones)} drone(s). Press Start Mission to execute."
+                    f"[SOLAR] ✅ Upload complete: {success_count}/{len(target_drones)} drone(s) — mission auto-started."
                 )
             else:
                 self.logMessage.emit("ERROR", "[SOLAR] ❌ All uploads failed")

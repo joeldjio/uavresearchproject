@@ -930,7 +930,7 @@ Window {
                             var id = ids[i]
                             var s = swarm.droneSnapshot(id)
                             if (s && s.lat !== undefined && s.lat !== 0.0) {
-                                drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic") }
+                                drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic"), alt: s.alt_rel || 0 }
                                 if (!root._zoomedDrones[id]) {
                                     var zd = Object.assign({}, root._zoomedDrones)
                                     zd[id] = true
@@ -963,7 +963,7 @@ Window {
                                     var id = ids[i]
                                     var s = swarm.droneSnapshot(id)
                                     if (s && s.lat !== undefined && s.lat !== 0.0)
-                                        drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic") }
+                                        drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic"), alt: s.alt_rel || 0 }
                                 }
                             }
                             mapLoader.item.updateDronesAndSelect(JSON.stringify(drones), root.selectedDroneId)

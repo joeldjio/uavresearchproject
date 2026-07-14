@@ -244,7 +244,7 @@ Item {
                     qsTr("<b>What you see</b><br>") +
                     qsTr("&nbsp;&nbsp;• Drone markers with live position (update ~5 Hz).<br>") +
                     qsTr("&nbsp;&nbsp;• Track polyline (history), colored by type: blue = generic, purple = observation.<br>") +
-as                    qsTr("&nbsp;&nbsp;• Waypoint markers (orange, numbered) — set via ADD WAYPOINT mode or Swarm Tab.<br>") +
+                    qsTr("&nbsp;&nbsp;• Waypoint markers (orange, numbered) — set via ADD WAYPOINT mode or Swarm Tab.<br>") +
                     qsTr("&nbsp;&nbsp;• Already dispatched mission path (green markers + dashed line) — remains after mission start as visual reference.<br>") +
                     qsTr("&nbsp;&nbsp;• Geofence (red dashed circle, if enabled in Safety).<br>") +
                     qsTr("&nbsp;&nbsp;• <b>ESCAPE Obstacles</b> (red spheres when perception enabled).<br>") +

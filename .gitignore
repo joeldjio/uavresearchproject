@@ -61,3 +61,10 @@ docs/ui/system-integration-audit-2026-06.md
 docs/project/escape-integration-roadmap.md
 docs/project/master-implementation-plan-2026.md
 docs/PX4_OPTIMIERUNGEN_UND_FEATURES.md
+
+# MAVProxy telemetry artifacts
+mav.parm
+mav.tlog
+mav.tlog.raw
+*.tlog
+*.tlog.raw

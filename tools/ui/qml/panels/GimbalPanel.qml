@@ -97,46 +97,108 @@ Item {
                 }
             }
 
-            // ── Video Stream Display ────────────────────────────────────
-            Text { text: qsTr("VIDEO STREAM"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10 }
+            // ── Stream type selector ────────────────────────────────────
+            Text { text: qsTr("STREAM ANZEIGE"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10 }
 
             Rectangle {
-                id: videoDisplayBox
+                width: parent.width; height: 36; radius: 8
+                color: "#1a2035"; border.color: "#2d3748"; border.width: 1
+
+                Row {
+                    anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
+                    spacing: 8
+                    Text { text: qsTr("Anzeige:"); color: "#64748b"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                    ComboBox {
+                        id: streamTypeCombo
+                        width: parent.width - 70; height: 26
+                        model: [
+                            qsTr("Kamera (Video-Stream)"),
+                            qsTr("LiDAR — /lidar/scan"),
+                            qsTr("Optical Flow — /flow_camera/image"),
+                        ]
+                        background: Rectangle { color: "#1e2535"; radius: 5; border.color: "#2d3748"; border.width: 1 }
+                        contentItem: Text {
+                            text: streamTypeCombo.displayText; color: "#e2e8f0"
+                            font.pixelSize: 11; verticalAlignment: Text.AlignVCenter; leftPadding: 6
+                        }
+                        delegate: ItemDelegate {
+                            width: streamTypeCombo.width
+                            contentItem: Text { text: modelData; color: "#e2e8f0"; font.pixelSize: 11 }
+                            background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
+                        }
+                        popup: Popup {
+                            y: streamTypeCombo.height; width: streamTypeCombo.width; padding: 0
+                            background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 5 }
+                            contentItem: ListView { clip: true; implicitHeight: contentHeight; model: streamTypeCombo.delegateModel }
+                        }
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+            }
+
+            // ── Unified stream display area ─────────────────────────────
+            // One box, three layers: Camera / LiDAR / Flow — selected via dropdown above.
+            // Height is fixed at 280px for LiDAR/Flow, 16:9 for Camera.
+            Rectangle {
+                id: streamDisplayBox
                 width: parent.width
-                height: Math.min(parent.width * 9/16, 400) // 16:9 aspect ratio, max 400px
-                radius: 8
-                color: "#0d1117"
-                border.color: "#2d3748"
+                height: streamTypeCombo.currentIndex === 0
+                        ? Math.min(parent.width * 9/16, 360)
+                        : 280
+                radius: 8; clip: true
+                color: streamTypeCombo.currentIndex === 1 ? "#040710"
+                     : streamTypeCombo.currentIndex === 2 ? "#040710"
+                     : "#0d1117"
+                border.color: streamTypeCombo.currentIndex === 1 ? "#1e3a5f"
+                            : streamTypeCombo.currentIndex === 2 ? "#3b0764"
+                            : "#2d3748"
                 border.width: 1
 
-                // Determine stream status via VideoStreamContext (R-10: never show blank video)
-                property string _vsStatus: {
-                    if (typeof videoStream === "undefined" || !videoStream) return "unconfigured"
-                    var did = root.selectedDroneId || ""
-                    if (!did) return "unconfigured"
-                    var s = videoStream.getVideoStatus(did)
-                    return s ? (s.status || "unconfigured") : "unconfigured"
-                }
-                property string _activeTarget: ""
-                property bool _hasFrame: false
-                Timer { interval: 250; running: true; repeat: true
-                    onTriggered: {
-                        if (typeof videoStream === "undefined" || !videoStream || !root.selectedDroneId) return
-                        var s = videoStream.getVideoStatus(root.selectedDroneId)
-                        parent._vsStatus = s ? (s.status || "unconfigured") : "unconfigured"
-                        parent._activeTarget = s ? (s.activeTarget || "") : ""
-                        parent._hasFrame = !!(s && s.hasFrame)
-                        if (parent._vsStatus === "receiving" && parent._activeTarget === "gimbal" && parent._hasFrame)
-                            gimbalVideoFrame.source = videoStream.frameUrl(root.selectedDroneId)
+                // ── Badge top-left showing which stream is active ──────
+                Rectangle {
+                    anchors { top: parent.top; left: parent.left; margins: 6 }
+                    width: badgeTxt.implicitWidth + 12; height: 20; radius: 4; z: 4
+                    color: streamTypeCombo.currentIndex === 1 ? "#1e3a5f"
+                         : streamTypeCombo.currentIndex === 2 ? "#3b0764"
+                         : "#059669"
+                    visible: streamTypeCombo.currentIndex !== 0 ||
+                             (videoDisplayBox._vsStatus === "receiving" && videoDisplayBox._activeTarget === "gimbal" && videoDisplayBox._hasFrame)
+                    Text {
+                        id: badgeTxt
+                        anchors.centerIn: parent
+                        text: streamTypeCombo.currentIndex === 1 ? "◉ LiDAR"
+                            : streamTypeCombo.currentIndex === 2 ? "◉ Flow"
+                            : "● LIVE"
+                        color: "white"; font.pixelSize: 9; font.weight: Font.Bold
                     }
                 }
 
-                // Video stream placeholder/display area
-                Rectangle {
-                    anchors { fill: parent; margins: 2 }
-                    radius: 6
-                    color: "#000000"
+                // ════════════════════════════════════════════════════════
+                // LAYER 0 — Camera (GStreamer / VideoStream)
+                // ════════════════════════════════════════════════════════
+                Item {
+                    anchors.fill: parent
+                    visible: streamTypeCombo.currentIndex === 0
 
+                    // Shared properties for stream status
+                    property string _vsStatus: "unconfigured"
+                    property string _activeTarget: ""
+                    property bool   _hasFrame: false
+                    id: videoDisplayBox
+
+                    Timer { interval: 250; running: streamTypeCombo.currentIndex === 0; repeat: true
+                        onTriggered: {
+                            if (typeof videoStream === "undefined" || !videoStream || !root.selectedDroneId) return
+                            var s = videoStream.getVideoStatus(root.selectedDroneId)
+                            videoDisplayBox._vsStatus     = s ? (s.status     || "unconfigured") : "unconfigured"
+                            videoDisplayBox._activeTarget = s ? (s.activeTarget || "")           : ""
+                            videoDisplayBox._hasFrame     = !!(s && s.hasFrame)
+                            if (videoDisplayBox._vsStatus === "receiving" &&
+                                videoDisplayBox._activeTarget === "gimbal" &&
+                                videoDisplayBox._hasFrame)
+                                gimbalVideoFrame.source = videoStream.frameUrl(root.selectedDroneId)
+                        }
+                    }
                     Connections {
                         target: typeof videoStream !== "undefined" ? videoStream : null
                         function onFrameChanged(droneId, frameUrl) {
@@ -145,205 +207,303 @@ Item {
                         }
                     }
 
-                    Image {
-                        id: gimbalVideoFrame
-                        anchors.fill: parent
-                        cache: false
-                        asynchronous: true
-                        fillMode: Image.PreserveAspectFit
-                        visible: videoDisplayBox._vsStatus === "receiving" && videoDisplayBox._activeTarget === "gimbal" && videoDisplayBox._hasFrame
-                        source: ""
-                    }
-
-                    // Placeholder — visible for ALL states except "receiving"
-                    // R-10: no blank video rectangle before stream is available
-                    Column {
-                        anchors.centerIn: parent
-                        spacing: 12
-                        visible: videoDisplayBox._vsStatus !== "receiving" || videoDisplayBox._activeTarget !== "gimbal" || !videoDisplayBox._hasFrame
-
-                        Text {
-                            text: {
-                                var s = videoDisplayBox._vsStatus
-                                if (s === "waiting")  return "⏳"
-                                if (s === "stalled")  return "⚠"
-                                if (s === "error")    return "✕"
-                                return "📹"
-                            }
-                            color: {
-                                var s = videoDisplayBox._vsStatus
-                                if (s === "waiting")  return "#f59e0b"
-                                if (s === "stalled")  return "#f97316"
-                                if (s === "error")    return "#ef4444"
-                                return "#64748b"
-                            }
-                            font.pixelSize: 48
-                            anchors.horizontalCenter: parent.horizontalCenter
+                    Rectangle { anchors.fill: parent; color: "#000000"; radius: 6
+                        Image {
+                            id: gimbalVideoFrame
+                            anchors.fill: parent; cache: false; asynchronous: true
+                            fillMode: Image.PreserveAspectFit; source: ""
+                            visible: videoDisplayBox._vsStatus === "receiving" &&
+                                     videoDisplayBox._activeTarget === "gimbal" &&
+                                     videoDisplayBox._hasFrame
                         }
-                        Text {
-                            text: {
-                                var s = videoDisplayBox._vsStatus
-                                if (s === "waiting")  return qsTr("Waiting for stream …")
-                                if (s === "stalled")  return qsTr("Stream stalled")
-                                if (s === "error")    return qsTr("Stream error")
-                                return qsTr("No Active Stream")
-                            }
-                            color: {
-                                var s = videoDisplayBox._vsStatus
-                                if (s === "waiting")  return "#f59e0b"
-                                if (s === "stalled")  return "#f97316"
-                                if (s === "error")    return "#ef4444"
-                                return "#64748b"
-                            }
-                            font.pixelSize: 14
-                            anchors.horizontalCenter: parent.horizontalCenter
-                        }
-                        Text {
-                            text: {
-                                if (typeof videoStream === "undefined" || !videoStream || !root.selectedDroneId) return ""
-                                var s = videoStream.getVideoStatus(root.selectedDroneId)
-                                return s && s.url ? s.url : qsTr("Configure stream in ROS2 Panel → Video Stream")
-                            }
-                            color: "#475569"
-                            font.pixelSize: 9; font.family: "Consolas"
-                            anchors.horizontalCenter: parent.horizontalCenter
-                            wrapMode: Text.WordWrap; width: parent.width * 0.9
-                        }
-                    }
 
-                    // Stream active indicator (ONLY when receiving)
-                    Rectangle {
-                        anchors { top: parent.top; left: parent.left; margins: 8 }
-                        width: streamLabel.width + 16
-                        height: 24
-                        radius: 4
-                        color: "#059669"
-                        visible: videoDisplayBox._vsStatus === "receiving" && videoDisplayBox._activeTarget === "gimbal" && videoDisplayBox._hasFrame
-
-                        Row {
-                            anchors.centerIn: parent
-                            spacing: 6
-                            Rectangle {
-                                width: 8; height: 8; radius: 4
-                                color: "#ffffff"
-                                anchors.verticalCenter: parent.verticalCenter
-                                SequentialAnimation on opacity {
-                                    running: true
-                                    loops: Animation.Infinite
-                                    NumberAnimation { from: 1.0; to: 0.3; duration: 800 }
-                                    NumberAnimation { from: 0.3; to: 1.0; duration: 800 }
-                                }
+                        // No-stream placeholder
+                        Column {
+                            anchors.centerIn: parent; spacing: 10
+                            visible: !(videoDisplayBox._vsStatus === "receiving" &&
+                                       videoDisplayBox._activeTarget === "gimbal" &&
+                                       videoDisplayBox._hasFrame)
+                            Text {
+                                text: { var s = videoDisplayBox._vsStatus
+                                    if (s === "waiting") return "⏳"
+                                    if (s === "stalled") return "⚠"
+                                    if (s === "error")   return "✕"
+                                    return "📹" }
+                                color: { var s = videoDisplayBox._vsStatus
+                                    if (s === "waiting") return "#f59e0b"
+                                    if (s === "stalled") return "#f97316"
+                                    if (s === "error")   return "#ef4444"
+                                    return "#64748b" }
+                                font.pixelSize: 40; anchors.horizontalCenter: parent.horizontalCenter
                             }
                             Text {
-                                id: streamLabel
-                                text: qsTr("LIVE")
-                                color: "#ffffff"
-                                font.pixelSize: 10
-                                font.weight: Font.Bold
-                                anchors.verticalCenter: parent.verticalCenter
+                                text: { var s = videoDisplayBox._vsStatus
+                                    if (s === "waiting") return qsTr("Warte auf Stream…")
+                                    if (s === "stalled") return qsTr("Stream gestoppt")
+                                    if (s === "error")   return qsTr("Stream-Fehler")
+                                    return qsTr("Kein aktiver Stream") }
+                                color: { var s = videoDisplayBox._vsStatus
+                                    if (s === "waiting") return "#f59e0b"
+                                    if (s === "stalled") return "#f97316"
+                                    if (s === "error")   return "#ef4444"
+                                    return "#64748b" }
+                                font.pixelSize: 13; anchors.horizontalCenter: parent.horizontalCenter
+                            }
+                            Text {
+                                text: { if (typeof videoStream === "undefined" || !videoStream || !root.selectedDroneId) return ""
+                                    var s = videoStream.getVideoStatus(root.selectedDroneId)
+                                    return s && s.url ? s.url : qsTr("Stream in ROS2-Panel → Video Stream konfigurieren") }
+                                color: "#475569"; font.pixelSize: 9; font.family: "Consolas"
+                                anchors.horizontalCenter: parent.horizontalCenter
+                                wrapMode: Text.WordWrap; width: parent.width * 0.9
                             }
                         }
-                    }
 
-                    // Stream info overlay (bottom) — only when receiving
-                    Rectangle {
-                        anchors { bottom: parent.bottom; left: parent.left; right: parent.right; margins: 8 }
-                        height: 28
-                        radius: 4
-                        color: "#1a2035cc"
-                        visible: videoDisplayBox._vsStatus === "receiving" && videoDisplayBox._activeTarget === "gimbal" && videoDisplayBox._hasFrame
-
-                        Row {
-                            anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
-                            spacing: 12
-
-                            Text {
-                                text: typeof camera !== "undefined" ? camera.currentSource : "—"
-                                color: "#e2e8f0"
-                                font.pixelSize: 10
-                                font.family: "Consolas"
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            Rectangle {
-                                width: 1; height: 16
-                                color: "#334155"
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            Text {
-                                text: {
-                                    if (typeof camera === "undefined") return "—"
-                                    var status = camera.getCameraStatus()
-                                    return status.resolution || "—"
-                                }
-                                color: "#94a3b8"
-                                font.pixelSize: 10
-                                font.family: "Consolas"
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            Text {
-                                text: {
-                                    if (typeof camera === "undefined") return "—"
-                                    var status = camera.getCameraStatus()
-                                    return status.fps ? status.fps + " fps" : "—"
-                                }
-                                color: "#94a3b8"
-                                font.pixelSize: 10
-                                font.family: "Consolas"
-                                anchors.verticalCenter: parent.verticalCenter
-                            }
-
-                            Item { width: 1; height: 1; Layout.fillWidth: true }
-
-                            // Recording indicator in stream overlay
+                        // Bottom status bar — only when receiving
+                        Rectangle {
+                            anchors { bottom: parent.bottom; left: parent.left; right: parent.right; margins: 6 }
+                            height: 26; radius: 4; color: "#cc1a2035"
+                            visible: videoDisplayBox._vsStatus === "receiving" &&
+                                     videoDisplayBox._activeTarget === "gimbal" &&
+                                     videoDisplayBox._hasFrame
                             Row {
-                                spacing: 4
-                                visible: typeof camera !== "undefined" && camera.recordingActive
-                                anchors.verticalCenter: parent.verticalCenter
-
-                                Rectangle {
-                                    width: 8; height: 8; radius: 4
-                                    color: "#ef4444"
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    SequentialAnimation on opacity {
-                                        running: true
-                                        loops: Animation.Infinite
-                                        NumberAnimation { from: 1.0; to: 0.2; duration: 600 }
-                                        NumberAnimation { from: 0.2; to: 1.0; duration: 600 }
-                                    }
-                                }
-                                Text {
-                                    text: qsTr("REC")
-                                    color: "#ef4444"
-                                    font.pixelSize: 10
-                                    font.weight: Font.Bold
-                                    anchors.verticalCenter: parent.verticalCenter
+                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }; spacing: 10
+                                Text { text: typeof camera !== "undefined" ? camera.currentSource : "—"
+                                    color: "#e2e8f0"; font.pixelSize: 9; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                                Rectangle { width: 1; height: 14; color: "#334155"; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: { if (typeof camera === "undefined") return "—"
+                                    var st = camera.getCameraStatus(); return st.resolution || "—" }
+                                    color: "#94a3b8"; font.pixelSize: 9; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                                Text { text: { if (typeof camera === "undefined") return "—"
+                                    var st = camera.getCameraStatus(); return st.fps ? st.fps + " fps" : "—" }
+                                    color: "#94a3b8"; font.pixelSize: 9; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                                Item { width: 1; height: 1; Layout.fillWidth: true }
+                                Row { spacing: 4; anchors.verticalCenter: parent.verticalCenter
+                                    visible: typeof camera !== "undefined" && camera.recordingActive
+                                    Rectangle { width: 7; height: 7; radius: 3.5; color: "#ef4444"; anchors.verticalCenter: parent.verticalCenter
+                                        SequentialAnimation on opacity { running: true; loops: Animation.Infinite
+                                            NumberAnimation { from: 1.0; to: 0.2; duration: 600 }
+                                            NumberAnimation { from: 0.2; to: 1.0; duration: 600 } } }
+                                    Text { text: "REC"; color: "#ef4444"; font.pixelSize: 9; font.weight: Font.Bold; anchors.verticalCenter: parent.verticalCenter }
                                 }
                             }
                         }
                     }
+                }
 
+                // ════════════════════════════════════════════════════════
+                // LAYER 1 — LiDAR polar (MAVLink OBSTACLE_DISTANCE)
+                // ════════════════════════════════════════════════════════
+                Item {
+                    anchors.fill: parent
+                    visible: streamTypeCombo.currentIndex === 1
+                    id: lidarLayer
+
+                    property var  _ranges:    []
+                    property real _angleMin:  0
+                    property real _angleStep: 0.5
+                    property real _maxRange:  20.0
+
+                    Timer {
+                        interval: 200; running: lidarLayer.visible; repeat: true
+                        onTriggered: {
+                            if (typeof telemetryModel === "undefined" || !telemetryModel || !root.selectedDroneId) return
+                            var snap = telemetryModel.snapshotFor(root.selectedDroneId)
+                            if (!snap) return
+                            var od = snap["obstacle_distance"] || snap["OBSTACLE_DISTANCE"]
+                            if (!od || !od.distances) return
+                            lidarLayer._ranges    = od.distances    || []
+                            lidarLayer._angleMin  = od.angle_offset || 0
+                            lidarLayer._angleStep = od.increment_f  || 0.5
+                            lidarLayer._maxRange  = od.max_distance ? od.max_distance / 100.0 : 20.0
+                            lidarGimbalCanvas.requestPaint()
+                        }
+                    }
+
+                    Canvas {
+                        id: lidarGimbalCanvas
+                        anchors.fill: parent
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            var cx = width / 2; var cy = height / 2
+                            var R  = Math.min(width, height) / 2 - 20
+
+                            // Grid rings + spokes
+                            ctx.strokeStyle = "#1e2535"; ctx.lineWidth = 1
+                            for (var r = 1; r <= 4; r++) {
+                                ctx.beginPath(); ctx.arc(cx, cy, R * r / 4, 0, Math.PI * 2); ctx.stroke()
+                            }
+                            for (var a = 0; a < 360; a += 45) {
+                                var rad = a * Math.PI / 180
+                                ctx.beginPath(); ctx.moveTo(cx, cy)
+                                ctx.lineTo(cx + Math.sin(rad) * R, cy - Math.cos(rad) * R); ctx.stroke()
+                            }
+                            // Range labels
+                            ctx.fillStyle = "#475569"; ctx.font = "9px Consolas"; ctx.textAlign = "left"
+                            for (var ri = 1; ri <= 4; ri++) {
+                                var lr = lidarLayer._maxRange * ri / 4
+                                ctx.fillText(lr.toFixed(0) + "m", cx + R * ri / 4 + 3, cy - 2)
+                            }
+
+                            var distances = lidarLayer._ranges
+                            if (!distances || distances.length === 0) {
+                                ctx.fillStyle = "#374151"; ctx.font = "11px Consolas"; ctx.textAlign = "center"
+                                ctx.fillText("Keine LiDAR-Daten", cx, cy - 8)
+                                ctx.fillText("(PRX1_TYPE=2 oder RNGFND1_TYPE=10)", cx, cy + 8)
+                                return
+                            }
+
+                            var maxD     = lidarLayer._maxRange * 100
+                            var aMin     = lidarLayer._angleMin
+                            var aStep    = lidarLayer._angleStep
+                            ctx.beginPath()
+                            ctx.fillStyle = "rgba(96,165,250,0.25)"
+                            ctx.strokeStyle = "#60a5fa"; ctx.lineWidth = 1.5
+                            var first = true
+                            for (var i = 0; i < distances.length; i++) {
+                                var d = distances[i]
+                                if (d === 65535) d = maxD
+                                var dist   = Math.min(d, maxD) / maxD
+                                var aDeg   = aMin + i * aStep
+                                var aRad   = (aDeg - 90) * Math.PI / 180
+                                var px = cx + Math.cos(aRad) * R * dist
+                                var py = cy + Math.sin(aRad) * R * dist
+                                if (first) { ctx.moveTo(px, py); first = false } else ctx.lineTo(px, py)
+                            }
+                            ctx.closePath(); ctx.fill(); ctx.stroke()
+                            // Drone dot
+                            ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2)
+                            ctx.fillStyle = "#22c55e"; ctx.fill()
+                        }
+                    }
+
+                    // Compass N
+                    Text { text: "N"; color: "#60a5fa"; font.pixelSize: 10; font.weight: Font.Bold
+                        anchors { top: parent.top; horizontalCenter: parent.horizontalCenter; topMargin: 6 } }
+                    // Footer stats
+                    Text { text: lidarLayer._ranges.length + " Strahlen | max " + lidarLayer._maxRange.toFixed(0) + " m"
+                        color: "#475569"; font.pixelSize: 9; font.family: "Consolas"
+                        anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: 4 } }
+                }
+
+                // ════════════════════════════════════════════════════════
+                // LAYER 2 — Optical Flow vector (MAVLink OPTICAL_FLOW)
+                // ════════════════════════════════════════════════════════
+                Item {
+                    anchors.fill: parent
+                    visible: streamTypeCombo.currentIndex === 2
+                    id: flowLayer
+
+                    property real _flowX: 0; property real _flowY: 0
+                    property real _quality: 0; property real _groundDist: 0
+
+                    Timer {
+                        interval: 200; running: flowLayer.visible; repeat: true
+                        onTriggered: {
+                            if (typeof telemetryModel === "undefined" || !telemetryModel || !root.selectedDroneId) return
+                            var snap = telemetryModel.snapshotFor(root.selectedDroneId)
+                            if (!snap) return
+                            var of = snap["optical_flow"] || snap["OPTICAL_FLOW"]
+                            if (!of) return
+                            flowLayer._flowX      = of.flow_comp_m_x   || 0
+                            flowLayer._flowY      = of.flow_comp_m_y   || 0
+                            flowLayer._quality    = of.quality         || 0
+                            flowLayer._groundDist = of.ground_distance || 0
+                            flowGimbalCanvas.requestPaint()
+                        }
+                    }
+
+                    Canvas {
+                        id: flowGimbalCanvas
+                        anchors { fill: parent; margins: 16 }
+                        onPaint: {
+                            var ctx = getContext("2d")
+                            ctx.clearRect(0, 0, width, height)
+                            var cx = width / 2; var cy = height / 2
+
+                            // Crosshair
+                            ctx.strokeStyle = "#1e2535"; ctx.lineWidth = 1
+                            ctx.beginPath(); ctx.moveTo(0, cy); ctx.lineTo(width, cy); ctx.stroke()
+                            ctx.beginPath(); ctx.moveTo(cx, 0); ctx.lineTo(cx, height); ctx.stroke()
+
+                            // Quality circle
+                            var qual = Math.min(1, flowLayer._quality / 255.0)
+                            ctx.strokeStyle = "rgba(167,139,250," + (0.15 + 0.25 * qual) + ")"
+                            ctx.lineWidth = 1
+                            ctx.beginPath(); ctx.arc(cx, cy, Math.min(cx, cy) - 4, 0, Math.PI * 2); ctx.stroke()
+
+                            if (flowLayer._quality === 0) {
+                                ctx.fillStyle = "#374151"; ctx.font = "11px Consolas"; ctx.textAlign = "center"
+                                ctx.fillText("Keine Flow-Daten (quality=0)", cx, cy - 8)
+                                ctx.fillText("(Optical-Flow-Plugin aktivieren)", cx, cy + 8)
+                                return
+                            }
+
+                            var scale = Math.min(cx, cy) * 0.7
+                            var dx = flowLayer._flowX * scale; var dy = flowLayer._flowY * scale
+                            var ex = cx + dx; var ey = cy + dy
+
+                            // Arrow shaft
+                            ctx.strokeStyle = "rgba(167,139,250," + (0.5 + 0.5 * qual) + ")"
+                            ctx.lineWidth = 2.5
+                            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(ex, ey); ctx.stroke()
+
+                            // Arrowhead
+                            var headLen = 10; var ang = Math.atan2(ey - cy, ex - cx)
+                            ctx.beginPath()
+                            ctx.moveTo(ex, ey)
+                            ctx.lineTo(ex - headLen * Math.cos(ang - Math.PI / 6), ey - headLen * Math.sin(ang - Math.PI / 6))
+                            ctx.lineTo(ex - headLen * Math.cos(ang + Math.PI / 6), ey - headLen * Math.sin(ang + Math.PI / 6))
+                            ctx.closePath(); ctx.fillStyle = "#a78bfa"; ctx.fill()
+
+                            // Centre dot
+                            ctx.beginPath(); ctx.arc(cx, cy, 4, 0, Math.PI * 2)
+                            ctx.fillStyle = "#22c55e"; ctx.fill()
+                        }
+                    }
+
+                    // Stats overlay (bottom)
+                    Column {
+                        anchors { bottom: parent.bottom; left: parent.left; margins: 8 }; spacing: 2
+                        Text { text: "vx=" + flowLayer._flowX.toFixed(3) + " m/s   vy=" + flowLayer._flowY.toFixed(3) + " m/s"
+                            color: "#a78bfa"; font.pixelSize: 9; font.family: "Consolas" }
+                        Text { text: "quality=" + flowLayer._quality + "   gnd=" + flowLayer._groundDist.toFixed(2) + " m"
+                            color: "#475569"; font.pixelSize: 9; font.family: "Consolas" }
+                    }
+                    // Quality bar (right edge)
+                    Rectangle {
+                        anchors { top: parent.top; right: parent.right; bottom: parent.bottom; margins: 8 }
+                        width: 6; radius: 3; color: "#1e2535"
+                        Rectangle {
+                            width: parent.width
+                            height: parent.height * Math.min(1, flowLayer._quality / 255.0)
+                            anchors.bottom: parent.bottom; radius: 3
+                            color: flowLayer._quality > 150 ? "#22c55e"
+                                 : flowLayer._quality > 80  ? "#f59e0b"
+                                 : "#ef4444"
+                        }
+                    }
                 }
             }
 
-            // ── Gimbal controls ─────────────────────────────────────────
+            // ── Action buttons (Kamera / LiDAR / Flow) ──────────────────
+            // Index 0 (Kamera): Start / End GStreamer video stream
+            // Index 1 (LiDAR):  OpenCV LiDAR polar-plot viewer (gz.transport13)
+            // Index 2 (Flow):   OpenCV flow-camera viewer (gz.transport13)
             Row {
                 width: parent.width
                 spacing: 8
 
+                // Kamera: Start Stream
                 Rectangle {
-                    width: (parent.width - 8) / 2
-                    height: 34
-                    radius: 5
+                    width: (parent.width - 8) / 2; height: 34; radius: 5
+                    visible: streamTypeCombo.currentIndex === 0
                     color: gimbalStartStreamM.containsMouse ? "#166534" : "#14532d"
                     border.color: "#22c55e"; border.width: 1
                     Text { anchors.centerIn: parent; text: "Start Stream"; color: "#86efac"; font.pixelSize: 10; font.weight: Font.Bold }
                     MouseArea {
-                        id: gimbalStartStreamM
-                        anchors.fill: parent
-                        hoverEnabled: true
+                        id: gimbalStartStreamM; anchors.fill: parent; hoverEnabled: true
                         onClicked: {
                             if (typeof videoStream === "undefined" || !videoStream || !root.selectedDroneId) return
                             var s = videoStream.getVideoStatus(root.selectedDroneId)
@@ -352,20 +512,41 @@ Item {
                         }
                     }
                 }
-
+                // Kamera: End Stream
                 Rectangle {
-                    width: (parent.width - 8) / 2
-                    height: 34
-                    radius: 5
+                    width: (parent.width - 8) / 2; height: 34; radius: 5
+                    visible: streamTypeCombo.currentIndex === 0
                     color: gimbalEndStreamM.containsMouse ? "#7f1d1d" : "#450a0a"
                     border.color: "#ef4444"; border.width: 1
                     Text { anchors.centerIn: parent; text: "End Stream"; color: "#fca5a5"; font.pixelSize: 10; font.weight: Font.Bold }
                     MouseArea {
-                        id: gimbalEndStreamM
-                        anchors.fill: parent
-                        hoverEnabled: true
+                        id: gimbalEndStreamM; anchors.fill: parent; hoverEnabled: true
                         onClicked: { if (typeof videoStream !== "undefined" && videoStream && root.selectedDroneId) videoStream.stopStream(root.selectedDroneId) }
                     }
+                }
+
+                // LiDAR: OpenCV polar-plot viewer
+                Rectangle {
+                    width: parent.width; height: 34; radius: 5
+                    visible: streamTypeCombo.currentIndex === 1
+                    property bool _ok: typeof sitl !== "undefined" && sitl !== null
+                    color: !_ok ? "#0d1117" : (lidarViewGimbalM.containsMouse ? "#1e3a5f" : "#0d1623")
+                    border.color: _ok ? "#2563eb" : "#1f2937"; border.width: 1
+                    Text { anchors.centerIn: parent; text: "◉ LiDAR Viewer öffnen (OpenCV)"; color: parent._ok ? "#93c5fd" : "#374151"; font.pixelSize: 10; font.weight: Font.Bold }
+                    MouseArea { id: lidarViewGimbalM; anchors.fill: parent; hoverEnabled: true; enabled: parent._ok
+                        onClicked: sitl.launchLidarViewer("/lidar/scan") }
+                }
+
+                // Flow: OpenCV camera viewer
+                Rectangle {
+                    width: parent.width; height: 34; radius: 5
+                    visible: streamTypeCombo.currentIndex === 2
+                    property bool _ok: typeof sitl !== "undefined" && sitl !== null
+                    color: !_ok ? "#0d1117" : (flowViewGimbalM.containsMouse ? "#3b0764" : "#1a0a28")
+                    border.color: _ok ? "#7c3aed" : "#1f2937"; border.width: 1
+                    Text { anchors.centerIn: parent; text: "◉ Flow Viewer öffnen (OpenCV)"; color: parent._ok ? "#c4b5fd" : "#374151"; font.pixelSize: 10; font.weight: Font.Bold }
+                    MouseArea { id: flowViewGimbalM; anchors.fill: parent; hoverEnabled: true; enabled: parent._ok
+                        onClicked: sitl.launchFlowViewer("/flow_camera/image") }
                 }
             }
 
@@ -558,13 +739,17 @@ Item {
             }
 
             // ── Camera Controls ─────────────────────────────────────────
-            Text { text: qsTr("CAMERA CONTROLS"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10 }
+            // Only visible in Kamera mode (index 0) — hidden for LiDAR / Flow
+            Text { text: qsTr("KAMERA STEUERUNG"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10
+                visible: streamTypeCombo.currentIndex === 0
+            }
 
             Rectangle {
                 width: parent.width; height: cameraCol.implicitHeight + 20; radius: 8
                 color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                 enabled: isObservation(root.selectedDroneId)
                 opacity: enabled ? 1.0 : 0.4
+                visible: streamTypeCombo.currentIndex === 0
 
                 Column {
                     id: cameraCol
@@ -798,13 +983,16 @@ Item {
             }
 
             // ── Camera Settings ─────────────────────────────────────────
-            Text { text: qsTr("CAMERA SETTINGS"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10 }
+            Text { text: qsTr("KAMERA EINSTELLUNGEN"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10
+                visible: streamTypeCombo.currentIndex === 0
+            }
 
             Rectangle {
                 width: parent.width; height: settingsCol.implicitHeight + 20; radius: 8
                 color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                 enabled: isObservation(root.selectedDroneId)
                 opacity: enabled ? 1.0 : 0.4
+                visible: streamTypeCombo.currentIndex === 0
 
                 Column {
                     id: settingsCol
@@ -913,13 +1101,16 @@ Item {
             }
 
             // ── Thermal Settings ────────────────────────────────────────
-            Text { text: qsTr("THERMAL SETTINGS"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10 }
+            Text { text: qsTr("WÄRME EINSTELLUNGEN"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10
+                visible: streamTypeCombo.currentIndex === 0
+            }
 
             Rectangle {
                 width: parent.width; height: thermalCol.implicitHeight + 20; radius: 8
                 color: "#1a2035"; border.color: "#2d3748"; border.width: 1
                 enabled: isObservation(root.selectedDroneId)
                 opacity: enabled ? 1.0 : 0.4
+                visible: streamTypeCombo.currentIndex === 0
 
                 Column {
                     id: thermalCol
@@ -1073,11 +1264,14 @@ Item {
             }
 
             // ── Camera Status ───────────────────────────────────────────
-            Text { text: qsTr("CAMERA STATUS"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10 }
+            Text { text: qsTr("KAMERA STATUS"); color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 1; topPadding: 10
+                visible: streamTypeCombo.currentIndex === 0
+            }
 
             Rectangle {
                 width: parent.width; height: statusCol.implicitHeight + 20; radius: 8
                 color: "#0d1117"; border.color: "#2d3748"; border.width: 1
+                visible: streamTypeCombo.currentIndex === 0
 
                 Column {
                     id: statusCol

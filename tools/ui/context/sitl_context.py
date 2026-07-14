@@ -43,6 +43,8 @@ Slots (QML):
   detectStreamingTopics() → list
   enableStreaming(topic)       gz topic -t … -p "data: 1"
   launchGstPreview(host, port) open terminal: gst-launch-1.0 …
+  launchLidarViewer(topic)     open detached OpenCV LiDAR polar-plot window
+  launchFlowViewer(topic)      open detached OpenCV flow-camera window
   launchMavproxy(json)         open terminal: mavproxy.py
   launchMavproxyWithJoystick() open terminal with joystick module
   launchMavproxyGraph(field)   open terminal with graph module
@@ -288,8 +290,8 @@ def _default_config() -> dict:
             "tcp_port": 5760,
             "udp_host": "127.0.0.1",
             "udp_port": 14550,
-            "use_map": True,
-            "use_console": True,
+            "use_map": False,
+            "use_console": False,
             "no_mavproxy": False,
             "wipe": False,
             "extra_args": "",
@@ -318,6 +320,88 @@ def _default_config() -> dict:
             "gz_ws_path": str(Path.home() / "gz_ws" / "src"),
         },
     }
+
+
+def _gz_env_prefix() -> str:
+    """Return bash lines that source the Gazebo environment if not already active.
+
+    When the viewer is launched from a GUI terminal (gnome-terminal etc.) it
+    inherits the desktop environment, which usually does NOT have gz.transport
+    on PYTHONPATH or LD_LIBRARY_PATH.  We probe the most common setup files in
+    priority order and source the first one that exists.
+
+    Returns a multi-line bash string (may be empty if nothing is found).
+    """
+    # Candidate setup files in priority order
+    candidates: List[Path] = [
+        # Colcon workspace install (most common for gz_ws)
+        Path.home() / "gz_ws" / "install" / "setup.bash",
+        # ROS2 workspace that also installs gz
+        Path.home() / "ros2_ws" / "install" / "setup.bash",
+        # System-wide Gazebo Harmonic
+        Path("/opt/gz/harmonic/setup.bash"),
+        Path("/usr/share/gazebo/setup.bash"),
+        Path("/usr/share/gz/gz-transport13/setup.bash"),
+    ]
+    # Also honour any setup file already on GZ_SETUP_FILE env override
+    env_override = os.environ.get("GZ_SETUP_FILE", "")
+    if env_override:
+        candidates.insert(0, Path(env_override))
+
+    lines: List[str] = []
+    for p in candidates:
+        if p.exists():
+            lines.append(f'source {shlex.quote(str(p))}\n')
+            break  # one is enough
+
+    # Propagate GZ_* env vars from the parent process if set
+    for var in ("GZ_PARTITION", "GZ_IP", "GZ_RELAY", "GZ_VERSION",
+                "PYTHONPATH", "LD_LIBRARY_PATH"):
+        val = os.environ.get(var)
+        if val:
+            lines.append(f'export {var}={shlex.quote(val)}\n')
+
+    return "".join(lines)
+
+
+def _gz_build_env() -> dict:
+    """Build an environment dict for directly launching viewer sub-processes.
+
+    Inherits the current process environment and overlays GZ_* variables and
+    any sourced setup file's PYTHONPATH / LD_LIBRARY_PATH so that
+    gz.transport13 is importable without a shell wrapper.
+    """
+    env = os.environ.copy()
+
+    # Source the first Gazebo setup file we find via a child bash and capture
+    # the resulting env — this is the only reliable way to pick up colcon paths.
+    candidates: List[Path] = [
+        Path.home() / "gz_ws" / "install" / "setup.bash",
+        Path.home() / "ros2_ws" / "install" / "setup.bash",
+        Path("/opt/gz/harmonic/setup.bash"),
+        Path("/usr/share/gazebo/setup.bash"),
+        Path("/usr/share/gz/gz-transport13/setup.bash"),
+    ]
+    env_override = os.environ.get("GZ_SETUP_FILE", "")
+    if env_override:
+        candidates.insert(0, Path(env_override))
+
+    for p in candidates:
+        if p.exists():
+            try:
+                result = subprocess.run(
+                    ["bash", "-c", f'source {shlex.quote(str(p))} && env'],
+                    capture_output=True, text=True, timeout=5,
+                )
+                for line in result.stdout.splitlines():
+                    if "=" in line:
+                        k, _, v = line.partition("=")
+                        env[k] = v
+            except Exception:
+                pass
+            break
+
+    return env
 
 
 class _PeripheralDevice:
@@ -353,6 +437,13 @@ class SITLContext(QObject):
     # Fired after terminal opens — payload: list of {id, connection_string}
     # Listeners (service_locator.wire) use this to auto-connect drones.
     autoConnectReady         = Signal("QVariantList")
+    # Fired when user toggles a sensor overlay (lidar/flow) from the SITL panel.
+    # QML MapView listens to this to show/hide the matching overlay.
+    sensorOverlayToggled     = Signal(str, bool)  # (sensor_type, visible)
+    # gz.transport live frames — base64-encoded JPEG, emitted at ~5 Hz.
+    # QML uses: Image { source: "data:image/jpeg;base64," + payload }
+    lidarFrameReady          = Signal(str)
+    flowFrameReady           = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -363,6 +454,7 @@ class SITLContext(QObject):
         self._gazebo_status = _S_STOPPED
         self._repo_valid    = False
         self._procs:  List[_TrackedProc] = []   # all tracked terminal procs
+        self._viewer_procs: List[_TrackedProc] = []  # detached viewer windows
 
         # Per-instance tracking for the "running instances" list
         # Each entry: {"index": i, "vehicle": str, "port": int, "started": float}
@@ -374,6 +466,20 @@ class SITLContext(QObject):
         # Pending parameter overrides (applied on next MAVProxy start)
         self._pending_params: Dict[str, str] = {}
 
+        # gz.transport in-process subscription state
+        # Two separate Nodes to prevent callback mixing between topics
+        self._gz_node_lidar:    Any = None
+        self._gz_node_flow:     Any = None
+        self._gz_lidar_active:  bool = False
+        self._gz_flow_active:   bool = False
+        # Latest rendered JPEG-Base64 frames (written by bg thread, read by QTimer)
+        self._gz_lidar_data:    Optional[str] = None   # base64 string or None
+        self._gz_flow_data:     Optional[dict] = None  # {"_prev_gray": …, "_b64": str|None}
+        self._gz_lock           = threading.Lock()
+        # Track last emitted b64 to skip unchanged frames (reduces flicker)
+        self._gz_lidar_last:    str = ""
+        self._gz_flow_last:     str = ""
+
         # Load persisted config
         self._cfg = _default_config()
         self._load_config_from_disk()
@@ -383,6 +489,12 @@ class SITLContext(QObject):
         self._watchdog.setInterval(3000)
         self._watchdog.timeout.connect(self._poll_procs)
         self._watchdog.start()
+
+        # gz overlay poller: emit lidarFrameReady / flowFrameReady at ~8 Hz
+        self._gz_poller = QTimer(self)
+        self._gz_poller.setInterval(125)
+        self._gz_poller.timeout.connect(self._poll_gz_data)
+        self._gz_poller.start()
 
     # ─────────────────────────────────────────────────────────────────────────
     # Repo management
@@ -518,8 +630,8 @@ class SITLContext(QObject):
         tcp_port    = int(cfg.get("tcp_port", 5760))
         udp_host    = cfg.get("udp_host",    "127.0.0.1")
         udp_port    = int(cfg.get("udp_port", 14550))
-        use_map     = bool(cfg.get("use_map",     True))
-        use_console = bool(cfg.get("use_console", True))
+        use_map     = bool(cfg.get("use_map",     False))
+        use_console = bool(cfg.get("use_console", False))
         no_mavproxy = bool(cfg.get("no_mavproxy", False))
         wipe        = bool(cfg.get("wipe",         False))
         extra_args  = cfg.get("extra_args", "").strip()
@@ -630,8 +742,8 @@ class SITLContext(QObject):
         heading     = int(cfg.get("offset_heading", 90))
         spacing     = int(cfg.get("offset_spacing", 10))
         swarm_file  = cfg.get("swarm_file",      "")
-        use_map     = bool(cfg.get("use_map",     True))
-        use_console = bool(cfg.get("use_console", True))
+        use_map     = bool(cfg.get("use_map",     False))
+        use_console = bool(cfg.get("use_console", False))
         extra_args  = cfg.get("extra_args",      "").strip()
 
         cmd_parts = [
@@ -704,22 +816,308 @@ class SITLContext(QObject):
     @Slot()
     def stopAll(self) -> None:
         with self._lock:
-            procs = list(self._procs)
+            procs = list(self._procs) + list(self._viewer_procs)
         for tp in procs:
             try:
                 tp.proc.terminate()
-            except Exception:
                 try:
+                    tp.proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
                     tp.proc.kill()
-                except Exception:
-                    pass
+            except Exception:
+                pass
         with self._lock:
             self._procs.clear()
+            self._viewer_procs.clear()
             self._instances.clear()
+        # Reset overlay state
+        self._gz_lidar_active = False
+        self._gz_flow_active  = False
+        with self._gz_lock:
+            self._gz_lidar_data = None
+            self._gz_flow_data  = None
+            self._gz_lidar_last = ""
+            self._gz_flow_last  = ""
         self._set_sim_status(_S_STOPPED)
         self.sitlInstancesChanged.emit()
         self._trace("sim_stop", {"reason": "user_stop_all"})
         self._log("INFO", "[SITL] All processes stopped.")
+
+    @Slot()
+    def stopViewers(self) -> None:
+        """Close all detached sensor-viewer processes (LiDAR / Flow OpenCV windows)."""
+        with self._lock:
+            procs = list(self._viewer_procs)
+        for tp in procs:
+            try:
+                tp.proc.terminate()
+                try:
+                    tp.proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    tp.proc.kill()
+            except Exception:
+                pass
+        with self._lock:
+            self._viewer_procs.clear()
+        # Also deactivate in-process overlays and clear caches so map overlay
+        # goes back to "no data" state when viewers are stopped externally.
+        self._gz_lidar_active = False
+        self._gz_flow_active  = False
+        with self._gz_lock:
+            self._gz_lidar_data = None
+            self._gz_flow_data  = None
+            self._gz_lidar_last = ""
+            self._gz_flow_last  = ""
+        self._log("INFO", "[SITL] Viewer windows closed.")
+
+    @Slot(str, bool)
+    def setSensorOverlay(self, sensor_type: str, visible: bool) -> None:
+        """Toggle a sensor overlay on the map (lidar or flow).
+
+        Emits sensorOverlayToggled(sensor_type, visible) which MapView.qml
+        handles to show/hide the matching overlay panel.
+        Also starts/stops the in-process gz.transport subscription so the
+        overlay gets live data without needing MAVLink OBSTACLE_DISTANCE.
+        """
+        self.sensorOverlayToggled.emit(sensor_type, visible)
+        self._log("INFO", f"[SITL] Sensor overlay '{sensor_type}' → {'on' if visible else 'off'}")
+        if visible:
+            self._gz_subscribe(sensor_type)
+        else:
+            self._gz_unsubscribe(sensor_type)
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # gz.transport in-process subscriptions for map overlays
+    # ─────────────────────────────────────────────────────────────────────────
+
+    def _gz_make_node(self) -> Any:
+        """Create a fresh gz.transport Node. Returns None if unavailable."""
+        try:
+            from gz.transport13 import Node as GzNode  # noqa: PLC0415
+            return GzNode()
+        except Exception as exc:
+            self._log("WARN", f"[SITL] gz.transport13 not available: {exc}")
+            return None
+
+    def _gz_subscribe(self, sensor_type: str) -> None:
+        if sensor_type == "lidar" and not self._gz_lidar_active:
+            if self._gz_node_lidar is None:
+                self._gz_node_lidar = self._gz_make_node()
+            if self._gz_node_lidar is None:
+                return
+            try:
+                from gz.msgs10.laserscan_pb2 import LaserScan  # noqa: PLC0415
+                topic = "/lidar/scan"
+                ok = self._gz_node_lidar.subscribe(LaserScan, topic, self._gz_lidar_cb)
+                if ok:
+                    self._gz_lidar_active = True
+                    self._log("INFO", f"[SITL] gz subscribed: {topic}")
+                else:
+                    self._log("WARN", f"[SITL] gz subscribe failed: {topic}")
+            except Exception as exc:
+                self._log("WARN", f"[SITL] gz lidar subscribe error: {exc}")
+
+        elif sensor_type == "flow" and not self._gz_flow_active:
+            if self._gz_node_flow is None:
+                self._gz_node_flow = self._gz_make_node()
+            if self._gz_node_flow is None:
+                return
+            try:
+                from gz.msgs10.image_pb2 import Image  # noqa: PLC0415
+                topic = "/flow_camera/image"
+                ok = self._gz_node_flow.subscribe(Image, topic, self._gz_flow_cb)
+                if ok:
+                    self._gz_flow_active = True
+                    self._log("INFO", f"[SITL] gz subscribed: {topic}")
+                else:
+                    self._log("WARN", f"[SITL] gz subscribe failed: {topic}")
+            except Exception as exc:
+                self._log("WARN", f"[SITL] gz flow subscribe error: {exc}")
+
+    def _gz_unsubscribe(self, sensor_type: str) -> None:
+        # gz.transport13 Node has no unsubscribe — just clear the active flag
+        # and drop cached data so the overlay goes back to "no data" state.
+        if sensor_type == "lidar":
+            self._gz_lidar_active = False
+            with self._gz_lock:
+                self._gz_lidar_data = None
+        elif sensor_type == "flow":
+            self._gz_flow_active = False
+            with self._gz_lock:
+                self._gz_flow_data = None
+
+    def _gz_lidar_cb(self, msg: Any) -> None:
+        """gz.transport callback — renders the LiDAR frame with OpenCV (identical
+        to lidar_viewer.py) and stores the JPEG-Base64 string."""
+        try:
+            import base64  # noqa: PLC0415
+            import math as _math  # noqa: PLC0415
+            import cv2          # noqa: PLC0415
+            import numpy as np  # noqa: PLC0415
+
+            ranges = np.asarray(msg.ranges, dtype=np.float32)
+            if ranges.size == 0:
+                return
+
+            angle_min  = float(msg.angle_min)
+            angle_max  = float(msg.angle_max)
+            angle_step = float(msg.angle_step)
+            if abs(angle_step) > 1e-12:
+                angles = angle_min + np.arange(ranges.size, dtype=np.float32) * angle_step
+            else:
+                angles = np.linspace(angle_min, angle_max, ranges.size, dtype=np.float32)
+
+            range_min    = float(msg.range_min)
+            range_max    = float(msg.range_max)
+            display_range = range_max
+            valid = np.isfinite(ranges) & (ranges >= range_min) & (ranges <= range_max)
+            shown_angles = angles[valid]
+            shown_ranges = ranges[valid]
+
+            # ── Render exactly like lidar_viewer.py ──────────────────────────
+            W = 300; cx = W // 2; cy = W // 2
+            radius = int(W * 0.44)
+            canvas = np.zeros((W, W, 3), dtype=np.uint8)
+
+            # Grid
+            for frac in (0.25, 0.5, 0.75, 1.0):
+                r = int(radius * frac)
+                cv2.circle(canvas, (cx, cy), r, (70, 70, 70), 1)
+                label = f"{display_range * frac:.0f}m"
+                cv2.putText(canvas, label, (cx + 4, cy - r + 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.3, (130, 130, 130), 1)
+            cv2.line(canvas, (cx - radius, cy), (cx + radius, cy), (70, 70, 70), 1)
+            cv2.line(canvas, (cx, cy - radius), (cx, cy + radius), (70, 70, 70), 1)
+
+            # Drone marker + forward arrow
+            cv2.circle(canvas, (cx, cy), 5, (0, 255, 255), -1)
+            cv2.arrowedLine(canvas, (cx, cy), (cx + 25, cy), (0, 255, 255), 1, tipLength=0.3)
+
+            # LiDAR points
+            if shown_ranges.size > 0:
+                scale = radius / display_range
+                x  = shown_ranges * np.cos(shown_angles)
+                y  = shown_ranges * np.sin(shown_angles)
+                px = (cx + x * scale).astype(np.int32)
+                py = (cy - y * scale).astype(np.int32)
+                for xi, yi in zip(px, py):
+                    if 0 <= xi < W and 0 <= yi < W:
+                        cv2.circle(canvas, (int(xi), int(yi)), 2, (0, 255, 0), -1)
+
+                ni     = int(np.argmin(shown_ranges))
+                status = (f"{shown_ranges.size}pts "
+                          f"min={shown_ranges[ni]:.1f}m")
+                cv2.putText(canvas, status, (4, 12),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.35, (255, 255, 255), 1)
+            else:
+                cv2.putText(canvas, "Warte auf LiDAR...", (10, cy),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+            ok, buf = cv2.imencode(".jpg", canvas, [cv2.IMWRITE_JPEG_QUALITY, 85])
+            if not ok:
+                return
+            b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+            with self._gz_lock:
+                self._gz_lidar_data = b64
+        except Exception:
+            pass
+
+    def _gz_flow_cb(self, msg: Any) -> None:
+        """gz.transport callback — renders the flow frame with OpenCV (identical
+        to flow_viewer.py) and stores the JPEG-Base64 string."""
+        try:
+            import base64  # noqa: PLC0415
+            import cv2      # noqa: PLC0415
+            import numpy as np  # noqa: PLC0415
+
+            width  = int(msg.width)
+            height = int(msg.height)
+            if width <= 0 or height <= 0 or not msg.data:
+                return
+
+            raw = np.frombuffer(msg.data, dtype=np.uint8)
+            rgb_size  = width * height * 3
+            rgba_size = width * height * 4
+            gray_size = width * height
+
+            if raw.size >= rgba_size:
+                rgba  = raw[:rgba_size].reshape((height, width, 4))
+                frame = cv2.cvtColor(rgba, cv2.COLOR_RGBA2BGR)
+            elif raw.size >= rgb_size:
+                rgb   = raw[:rgb_size].reshape((height, width, 3))
+                frame = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
+            elif raw.size >= gray_size:
+                gray_img = raw[:gray_size].reshape((height, width))
+                frame = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+            else:
+                return
+
+            gray_cur = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+            with self._gz_lock:
+                prev      = self._gz_flow_data
+                prev_gray = prev.get("_prev_gray") if isinstance(prev, dict) else None
+
+            if prev_gray is None or prev_gray.shape != gray_cur.shape:
+                # First frame — store gray, emit the raw camera image
+                with self._gz_lock:
+                    self._gz_flow_data = {"_prev_gray": gray_cur, "_b64": None}
+                return
+
+            # ── Render exactly like flow_viewer.py ───────────────────────────
+            flow = cv2.calcOpticalFlowFarneback(
+                prev_gray, gray_cur, None,
+                pyr_scale=0.5, levels=3, winsize=21,
+                iterations=3, poly_n=5, poly_sigma=1.2, flags=0,
+            )
+
+            # draw_flow_vectors — step=20, scale=4
+            display = frame.copy()
+            step = 20; fscale = 4.0
+            h, w = frame.shape[:2]
+            for fy in range(step // 2, h, step):
+                for fx in range(step // 2, w, step):
+                    dx, dy = flow[fy, fx]
+                    ex = int(round(fx + dx * fscale))
+                    ey = int(round(fy + dy * fscale))
+                    cv2.arrowedLine(display, (fx, fy), (ex, ey),
+                                    (0, 255, 0), 1, tipLength=0.3)
+
+            flow_x = float(np.median(flow[..., 0]))
+            flow_y = float(np.median(flow[..., 1]))
+            median_mag = float(np.median(np.sqrt(flow[..., 0]**2 + flow[..., 1]**2)))
+
+            cv2.putText(display, f"Flow x={flow_x:+.2f} y={flow_y:+.2f} px/frame",
+                        (4, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 255), 1)
+            cv2.putText(display, f"mag={median_mag:.3f}",
+                        (4, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (0, 255, 255), 1)
+
+            ok, buf = cv2.imencode(".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 80])
+            if not ok:
+                return
+            b64 = base64.b64encode(buf.tobytes()).decode("ascii")
+            with self._gz_lock:
+                self._gz_flow_data = {"_prev_gray": gray_cur, "_b64": b64}
+        except Exception:
+            pass
+
+    @Slot()
+    def _poll_gz_data(self) -> None:
+        """QTimer slot (main thread) — emit only when frame changed (no flicker)."""
+        with self._gz_lock:
+            lidar = self._gz_lidar_data
+            flow  = self._gz_flow_data
+
+        if lidar and self._gz_lidar_active and isinstance(lidar, str):
+            if lidar != self._gz_lidar_last:
+                self._gz_lidar_last = lidar
+                self.lidarFrameReady.emit(lidar)
+
+        if flow and self._gz_flow_active and isinstance(flow, dict):
+            b64 = flow.get("_b64")
+            if b64 and b64 != self._gz_flow_last:
+                self._gz_flow_last = b64
+                self.flowFrameReady.emit(b64)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Status / instance list
@@ -893,6 +1291,331 @@ class SITLContext(QObject):
         except Exception as exc:
             self._log("ERROR", f"[SITL] Failed to enable streaming: {exc}")
 
+    @Slot(result="QVariantList")
+    def detectGazeboSensorTopics(self) -> List[str]:
+        """Scan gz topic -l for lidar/flow related topics. Times out after 3 s."""
+        gz = shutil.which("gz")
+        if not gz:
+            return []
+        try:
+            result = subprocess.run(
+                [gz, "topic", "-l"],
+                capture_output=True, text=True, timeout=3,
+            )
+            lines = result.stdout.splitlines()
+            keywords = ("lidar", "scan", "flow", "range", "optical", "distance")
+            found = [ln for ln in lines if any(kw in ln.lower() for kw in keywords)]
+        except Exception:
+            found = []
+        return found
+
+    @Slot(str, result=str)
+    def getSdfSnippet(self, sensor_type: str) -> str:
+        """Return a ready-to-paste SDF XML snippet for sensor_type (lidar or flow_camera)."""
+        if sensor_type == "lidar":
+            return (
+                '<!-- ═══ 360° LiDAR (GPU) ═════════════════════════════════════════ -->\n'
+                '<link name="lidar_link">\n'
+                '  <pose>0 0 0.12 0 0 0</pose>\n'
+                '  <inertial><mass>0.01</mass>\n'
+                '    <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>\n'
+                '  </inertial>\n'
+                '  <sensor name="lidar" type="gpu_lidar">\n'
+                '    <pose>0 0 0 0 0 0</pose>\n'
+                '    <topic>/lidar/scan</topic>\n'
+                '    <update_rate>20</update_rate>\n'
+                '    <always_on>true</always_on>\n'
+                '    <visualize>true</visualize>\n'
+                '    <lidar>\n'
+                '      <scan>\n'
+                '        <horizontal>\n'
+                '          <samples>720</samples>\n'
+                '          <resolution>1</resolution>\n'
+                '          <min_angle>-3.14159265</min_angle>\n'
+                '          <max_angle>3.14159265</max_angle>\n'
+                '        </horizontal>\n'
+                '        <vertical>\n'
+                '          <samples>1</samples><resolution>1</resolution>\n'
+                '          <min_angle>0</min_angle><max_angle>0</max_angle>\n'
+                '        </vertical>\n'
+                '      </scan>\n'
+                '      <range><min>0.15</min><max>20.0</max><resolution>0.01</resolution></range>\n'
+                '      <noise><type>gaussian</type><mean>0</mean><stddev>0.01</stddev></noise>\n'
+                '    </lidar>\n'
+                '  </sensor>\n'
+                '</link>\n'
+                '<joint name="lidar_joint" type="fixed">\n'
+                '  <parent>base_link</parent>\n'
+                '  <child>lidar_link</child>\n'
+                '</joint>\n'
+                '<!-- ════════════════════════════════════════════════════════════════ -->'
+            )
+        if sensor_type == "flow_camera":
+            return (
+                '<!-- ═══ Optical-Flow downward camera ════════════════════════════════ -->\n'
+                '<link name="flow_camera_link">\n'
+                '  <pose>0 0 -0.05 0 1.570796 0</pose>\n'
+                '  <inertial><mass>0.01</mass>\n'
+                '    <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>\n'
+                '  </inertial>\n'
+                '  <sensor name="flow_camera" type="camera">\n'
+                '    <topic>/flow_camera/image</topic>\n'
+                '    <update_rate>30</update_rate>\n'
+                '    <always_on>true</always_on>\n'
+                '    <visualize>false</visualize>\n'
+                '    <camera>\n'
+                '      <horizontal_fov>1.047</horizontal_fov>\n'
+                '      <image><width>320</width><height>240</height><format>R8G8B8</format></image>\n'
+                '      <clip><near>0.05</near><far>30</far></clip>\n'
+                '    </camera>\n'
+                '  </sensor>\n'
+                '</link>\n'
+                '<joint name="flow_camera_joint" type="fixed">\n'
+                '  <parent>base_link</parent>\n'
+                '  <child>flow_camera_link</child>\n'
+                '</joint>\n'
+                '<!-- ════════════════════════════════════════════════════════════════ -->'
+            )
+        return f"<!-- Unknown sensor_type: {sensor_type!r} -->"
+
+    @Slot(str)
+    def launchGazeboSensorStream(self, config_json: str) -> None:
+        """
+        Open a terminal showing a human-readable summary of a Gazebo sensor topic.
+
+        LiDAR: filters the 720-line ranges/intensities flood to one compact line per frame:
+            Frame     1 | beams=720 | hits=  3 | min=1.23m max=18.50m
+
+        flow_camera: shows only frame count + image size (raw image bytes are not printed).
+        """
+        try:
+            cfg = json.loads(config_json)
+        except Exception as exc:
+            self._log("ERROR", f"[SITL] launchGazeboSensorStream bad JSON: {exc}")
+            return
+
+        sensor_type = cfg.get("sensor_type", "lidar")
+        default_topic = "/lidar/scan" if sensor_type == "lidar" else "/flow_camera/image"
+        topic = cfg.get("topic", default_topic).strip() or default_topic
+
+        gz = shutil.which("gz")
+        if not gz:
+            self._log("WARN", "[SITL] gz CLI not found — cannot open sensor stream")
+            return
+
+        label = {"lidar": "LiDAR (gz topic)", "flow_camera": "Optical Flow (gz topic)"}.get(
+            sensor_type, sensor_type
+        )
+
+        if sensor_type == "lidar":
+            # gz topic -e separates messages with a blank line OR '---'.
+            # Intensities lines are skipped; a new frame starts whenever a
+            # non-ranges line arrives after ranges have been collected.
+            python_filter = (
+                "import sys, re\n"
+                "frame=0; ranges=[]\n"
+                "def flush_frame(ranges):\n"
+                "    global frame\n"
+                "    if not ranges: return\n"
+                "    frame+=1\n"
+                "    finite=[r for r in ranges if r!=float('inf') and r<9999]\n"
+                "    mn=min(finite) if finite else float('nan')\n"
+                "    mx=max(finite) if finite else 0\n"
+                "    print(f'Frame {frame:5d} | beams={len(ranges):3d} | hits={len(finite):3d} | min={mn:.2f}m max={mx:.2f}m', flush=True)\n"
+                "for line in sys.stdin:\n"
+                "    line=line.rstrip()\n"
+                "    m=re.match(r'\\s*ranges:\\s*([\\d.eE+\\-inf]+)', line)\n"
+                "    if m:\n"
+                "        try: ranges.append(float(m.group(1)))\n"
+                "        except: ranges.append(float('inf'))\n"
+                "        continue\n"
+                "    if re.match(r'\\s*intensities:', line): continue\n"
+                "    # blank line or '---' or any header line = frame boundary\n"
+                "    if line == '' or line.startswith('---') or line.startswith('header') or line.startswith('stamp') or line.startswith('seq'):\n"
+                "        flush_frame(ranges); ranges=[]\n"
+            )
+            hint = "(Zusammenfassung pro Frame — ranges/intensities werden gefiltert)"
+        else:
+            # gz topic -e for camera Image: skip 'data:' byte lines (they are
+            # raw pixel values and produce the character-flood the user sees).
+            # Frame boundary = blank line or '---'.
+            python_filter = (
+                "import sys, re\n"
+                "frame=0; width=0; height=0; step=0\n"
+                "for line in sys.stdin:\n"
+                "    line=line.rstrip()\n"
+                "    if re.match(r'\\s*data:', line): continue\n"
+                "    m=re.match(r'\\s*width:\\s*(\\d+)', line)\n"
+                "    if m: width=int(m.group(1)); continue\n"
+                "    m=re.match(r'\\s*height:\\s*(\\d+)', line)\n"
+                "    if m: height=int(m.group(1)); continue\n"
+                "    m=re.match(r'\\s*step:\\s*(\\d+)', line)\n"
+                "    if m: step=int(m.group(1)); continue\n"
+                "    if (line == '' or line.startswith('---')) and width:\n"
+                "        frame+=1\n"
+                "        bpp=int(step/width) if width else 0\n"
+                "        print(f'Frame {frame:5d} | {width}x{height} px  {bpp}bpp', flush=True)\n"
+                "        width=0; height=0; step=0\n"
+            )
+            hint = "(Nur Frame-Zaehler und Bildgroesse — rohe Bilddaten werden gefiltert)"
+
+        script = (
+            f'echo "══════════════════════════════════════════"\n'
+            f'echo "  {label}"\n'
+            f'echo "  Topic: {topic}"\n'
+            f'echo "  {hint}"\n'
+            f'echo "══════════════════════════════════════════"\n'
+            f'echo "Warte auf erste Nachricht... (Ctrl-C zum Beenden)"\n'
+            f'echo ""\n'
+            f'gz topic -e -t {shlex.quote(topic)} | python3 -c {shlex.quote(python_filter)}\n'
+            f'echo "--- Stream beendet ---"\n'
+            f'read\n'
+        )
+        self._trace("gz_sensor_stream", {"sensor_type": sensor_type, "topic": topic})
+        self._log("INFO", f"[SITL] Gazebo sensor stream: {topic}")
+        self._open_terminal(script, title=f"{label} — {topic}")
+
+    @Slot()
+    def launchGazeboSensorMonitorAll(self) -> None:
+        """Open a terminal showing both LiDAR and optical-flow topics with filtered output."""
+        gz = shutil.which("gz")
+        if not gz:
+            self._log("WARN", "[SITL] gz CLI not found")
+            return
+
+        lidar_filter = (
+            "import sys, re\n"
+            "frame=0; ranges=[]\n"
+            "def flush_frame(ranges):\n"
+            "    global frame\n"
+            "    if not ranges: return\n"
+            "    frame+=1\n"
+            "    finite=[r for r in ranges if r!=float('inf') and r<9999]\n"
+            "    mn=min(finite) if finite else float('nan')\n"
+            "    mx=max(finite) if finite else 0\n"
+            "    print(f'[LIDAR] Frame {frame:5d} | beams={len(ranges):3d} | hits={len(finite):3d} | min={mn:.2f}m max={mx:.2f}m', flush=True)\n"
+            "for line in sys.stdin:\n"
+            "    line=line.rstrip()\n"
+            "    m=re.match(r'\\s*ranges:\\s*([\\d.eE+\\-inf]+)', line)\n"
+            "    if m:\n"
+            "        try: ranges.append(float(m.group(1)))\n"
+            "        except: ranges.append(float('inf'))\n"
+            "        continue\n"
+            "    if re.match(r'\\s*intensities:', line): continue\n"
+            "    if line == '' or line.startswith('---') or line.startswith('header') or line.startswith('stamp') or line.startswith('seq'):\n"
+            "        flush_frame(ranges); ranges=[]\n"
+        )
+        flow_filter = (
+            "import sys, re\n"
+            "frame=0; width=0; height=0; step=0\n"
+            "for line in sys.stdin:\n"
+            "    line=line.rstrip()\n"
+            "    if re.match(r'\\s*data:', line): continue\n"
+            "    m=re.match(r'\\s*width:\\s*(\\d+)', line)\n"
+            "    if m: width=int(m.group(1)); continue\n"
+            "    m=re.match(r'\\s*height:\\s*(\\d+)', line)\n"
+            "    if m: height=int(m.group(1)); continue\n"
+            "    m=re.match(r'\\s*step:\\s*(\\d+)', line)\n"
+            "    if m: step=int(m.group(1)); continue\n"
+            "    if (line == '' or line.startswith('---')) and width:\n"
+            "        frame+=1\n"
+            "        bpp=int(step/width) if width else 0\n"
+            "        print(f'[FLOW]  Frame {frame:5d} | {width}x{height} px  {bpp}bpp', flush=True)\n"
+            "        width=0; height=0; step=0\n"
+        )
+
+        import tempfile  # noqa: PLC0415
+        lidar_tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix="_lidar.py", delete=False, encoding="utf-8"
+        )
+        lidar_tmp.write(lidar_filter)
+        lidar_tmp.close()
+        flow_tmp = tempfile.NamedTemporaryFile(
+            mode="w", suffix="_flow.py", delete=False, encoding="utf-8"
+        )
+        flow_tmp.write(flow_filter)
+        flow_tmp.close()
+
+        script = (
+            'echo "═══════════════════════════════════════════════════════"\n'
+            'echo "  Gazebo Sensor Monitor — LiDAR + Optical Flow"\n'
+            'echo "  (kompakte Ausgabe, keine rohen Bytes)"\n'
+            'echo "═══════════════════════════════════════════════════════"\n'
+            'echo ""\n'
+            'echo "Verfuegbare Topics:"\n'
+            'gz topic -l | grep -E "(lidar|scan|flow|range|optical|distance)" || echo "(keine sensor topics gefunden)"\n'
+            'echo ""\n'
+            f'gz topic -e -t /lidar/scan | python3 {shlex.quote(lidar_tmp.name)} &\n'
+            'GZ_LIDAR_PID=$!\n'
+            f'gz topic -e -t /flow_camera/image | python3 {shlex.quote(flow_tmp.name)} &\n'
+            'GZ_FLOW_PID=$!\n'
+            'echo "Beide Streams laufen — druecke ENTER zum Beenden"\n'
+            'read\n'
+            'kill $GZ_LIDAR_PID $GZ_FLOW_PID 2>/dev/null\n'
+            f'rm -f {shlex.quote(lidar_tmp.name)} {shlex.quote(flow_tmp.name)}\n'
+            'echo "--- Monitor beendet ---"\n'
+            'read\n'
+        )
+        self._trace("gz_sensor_monitor_all", {})
+        self._log("INFO", "[SITL] Gazebo sensor monitor (all) opened")
+        self._open_terminal(script, title="Gazebo Sensor Monitor — LiDAR + Flow")
+
+    @Slot(str)
+    def launchLidarViewer(self, topic: str = "/lidar/scan") -> None:
+        """Launch the OpenCV LiDAR polar-plot viewer as a direct subprocess.
+
+        The Python process is tracked directly so stopViewers() / stopAll() can
+        send SIGTERM straight to it — no terminal wrapper means the window
+        closes reliably.  Close manually with Q or ESC inside the window.
+        Requires: pip install opencv-python gz-transport13 gz-msgs10
+        """
+        script = Path(__file__).parent.parent / "gz_viewers" / "lidar_viewer.py"
+        topic = (topic or "/lidar/scan").strip()
+        if not script.exists():
+            self._log("ERROR", f"[SITL] lidar_viewer.py not found: {script}")
+            return
+        try:
+            env = _gz_build_env()
+            proc = subprocess.Popen(
+                ["python3", str(script), "--topic", topic],
+                env=env,
+                start_new_session=True,   # detach from our process group
+            )
+            with self._lock:
+                self._viewer_procs.append(_TrackedProc(f"lidar:{topic}", proc))
+            self._trace("lidar_viewer_launch", {"topic": topic, "pid": proc.pid})
+            self._log("INFO", f"[SITL] LiDAR viewer launched (PID {proc.pid}, topic={topic})")
+        except Exception as exc:
+            self._log("ERROR", f"[SITL] launchLidarViewer failed: {exc}")
+
+    @Slot(str)
+    def launchFlowViewer(self, topic: str = "/flow_camera/image") -> None:
+        """Launch the OpenCV flow-camera viewer as a direct subprocess.
+
+        The Python process is tracked directly so stopViewers() / stopAll() can
+        send SIGTERM straight to it — no terminal wrapper means the window
+        closes reliably.  Close manually with Q or ESC inside the window.
+        Requires: pip install opencv-python gz-transport13 gz-msgs10
+        """
+        script = Path(__file__).parent.parent / "gz_viewers" / "flow_viewer.py"
+        topic = (topic or "/flow_camera/image").strip()
+        if not script.exists():
+            self._log("ERROR", f"[SITL] flow_viewer.py not found: {script}")
+            return
+        try:
+            env = _gz_build_env()
+            proc = subprocess.Popen(
+                ["python3", str(script), "--topic", topic],
+                env=env,
+                start_new_session=True,   # detach from our process group
+            )
+            with self._lock:
+                self._viewer_procs.append(_TrackedProc(f"flow:{topic}", proc))
+            self._trace("flow_viewer_launch", {"topic": topic, "pid": proc.pid})
+            self._log("INFO", f"[SITL] Flow viewer launched (PID {proc.pid}, topic={topic})")
+        except Exception as exc:
+            self._log("ERROR", f"[SITL] launchFlowViewer failed: {exc}")
+
     @Slot(str, int)
     def launchGstPreview(self, host: str, port: int) -> None:
         """
@@ -939,8 +1662,8 @@ class SITLContext(QObject):
             cfg = {}
 
         master      = cfg.get("master",      "tcp:127.0.0.1:5760")
-        use_map     = bool(cfg.get("use_map",     True))
-        use_console = bool(cfg.get("use_console", True))
+        use_map     = bool(cfg.get("use_map",     False))
+        use_console = bool(cfg.get("use_console", False))
         extra_args  = cfg.get("extra_args",   "").strip()
         commands    = cfg.get("script_commands", [])
 
@@ -966,8 +1689,8 @@ class SITLContext(QObject):
     def launchMavproxyWithJoystick(self) -> None:
         self.launchMavproxy(json.dumps({
             "master": "tcp:127.0.0.1:5760",
-            "use_map": True,
-            "use_console": True,
+            "use_map": False,
+            "use_console": False,
             "script_commands": ["module load joystick"],
         }))
 
@@ -976,7 +1699,7 @@ class SITLContext(QObject):
         field = field.strip() or "VFR_HUD.alt"
         self.launchMavproxy(json.dumps({
             "master": "tcp:127.0.0.1:5760",
-            "use_console": True,
+            "use_console": False,
             "script_commands": [f"graph {field}"],
         }))
 
@@ -1034,19 +1757,26 @@ class SITLContext(QObject):
 
     @Slot(str, str)
     def setPeripheralDevice(self, device_id: str, config_json: str) -> None:
-        """Enable a peripheral device with optional parameter overrides."""
+        """Enable a peripheral device and apply its parameters immediately.
+
+        Parameters are stored for next launch (pending_params) AND, if SITL
+        is currently running, sent right now via a silent mavproxy one-shot.
+        """
         try:
             cfg = json.loads(config_json)
         except Exception as exc:
             self._log("ERROR", f"[SITL] setPeripheralDevice bad JSON: {exc}")
             return
         self._peripheral_devices[device_id] = cfg
-        # Merge params into pending_params so they're applied on next MAVProxy start
-        for name, value in cfg.get("params", {}).items():
+        params = cfg.get("params", {})
+        for name, value in params.items():
             self._pending_params[name] = str(value)
         self._save_config_to_disk()
         self._trace("peripheral_set", {"device": device_id, "config": cfg})
         self._log("INFO", f"[SITL] Peripheral '{device_id}' enabled")
+        # Apply immediately if SITL is running
+        if params and self._sim_status == _S_RUNNING:
+            self._apply_params_now(params)
         self.peripheralDevicesChanged.emit()
 
     @Slot(str)
@@ -1067,6 +1797,30 @@ class SITLContext(QObject):
     def getPeripheralDevices(self) -> str:
         """Return JSON of currently enabled devices."""
         return json.dumps(self._peripheral_devices)
+
+    def _apply_params_now(self, params: dict) -> None:
+        """Silently send 'param set NAME VALUE' for each entry via a mavproxy one-shot.
+
+        Runs detached — no terminal window is opened.  Best-effort: if mavproxy
+        is not on PATH this is a no-op.
+        """
+        mavproxy = shutil.which("mavproxy.py") or shutil.which("mavproxy")
+        if not mavproxy:
+            self._log("WARN", "[SITL] mavproxy not found — params queued for next start")
+            return
+        cmds = "  ".join(f"param set {n} {v};" for n, v in params.items())
+        cmd = [mavproxy, "--master=tcp:127.0.0.1:5760",
+               "--cmd", cmds + "  exit"]
+        try:
+            subprocess.Popen(
+                cmd,
+                start_new_session=True,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            self._log("INFO", f"[SITL] Params applied now: {list(params.keys())}")
+        except Exception as exc:
+            self._log("WARN", f"[SITL] Immediate param apply failed: {exc}")
 
     # ─────────────────────────────────────────────────────────────────────────
     # Parameters (Tab 4)
@@ -1307,6 +2061,8 @@ class SITLContext(QObject):
             before = len(self._procs)
             self._procs = [tp for tp in self._procs if tp.proc.poll() is None]
             after = len(self._procs)
+            # Also clean up closed viewer windows
+            self._viewer_procs = [tp for tp in self._viewer_procs if tp.proc.poll() is None]
         if before != after:
             # If all sim terminals are gone, update status
             if after == 0 and self._sim_status == _S_RUNNING:

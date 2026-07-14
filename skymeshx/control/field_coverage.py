@@ -145,57 +145,80 @@ class FieldCoveragePlanner:
         
         return gps_waypoints
     
+    def _rotate_corners(
+        self,
+        corners: List[Tuple[float, float]],
+        angle_deg: float,
+    ) -> List[Tuple[float, float]]:
+        """Rotate NED corners by *angle_deg* degrees (counter-clockwise)."""
+        a = math.radians(angle_deg)
+        cos_a, sin_a = math.cos(a), math.sin(a)
+        return [(n * cos_a - e * sin_a, n * sin_a + e * cos_a) for n, e in corners]
+
     def _generate_parallel_lines(
         self,
         corners: List[Tuple[float, float]],
-        config: CoverageConfig
+        config: CoverageConfig,
+        *,
+        _heading_override: Optional[float] = None,
     ) -> List[Tuple[float, float]]:
         """
         Generate parallel line pattern.
-        
+
+        Lines run along the *heading* axis (default 0 = North–South strips).
+        The field polygon is rotated so that scanlines are always east–west
+        in the rotated frame, then rotated back.
+
         Args:
             corners: Field corners in local NED (north, east)
             config: Coverage configuration
-            
+            _heading_override: Internal — use this heading instead of config.heading
+
         Returns:
             List of waypoints in local NED coordinates
         """
-        # Calculate bounding box for scanline placement.
-        north_vals = [n for n, e in corners]
-        east_vals = [e for n, e in corners]
+        heading = _heading_override if _heading_override is not None else config.heading
+
+        # Rotate corners so that the scan direction aligns with east axis.
+        # heading=0  → lines run N–S  → rotate by 0° (scan east)
+        # heading=90 → lines run E–W  → rotate by -90° (scan east in rotated frame)
+        rot_corners = self._rotate_corners(corners, -heading)
+
+        # Calculate bounding box in rotated frame.
+        north_vals = [n for n, e in rot_corners]
+        east_vals  = [e for n, e in rot_corners]
         min_n, max_n = min(north_vals), max(north_vals)
-        min_e, max_e = min(east_vals), max(east_vals)
-        
-        # Calculate number of lines needed
+        min_e, max_e = min(east_vals),  max(east_vals)
+
         field_width = max_e - min_e
         num_lines = int(field_width / config.line_spacing) + 1
-        
-        waypoints = []
+
+        rot_waypoints: List[Tuple[float, float]] = []
         for i in range(num_lines):
-            # Calculate line position
             offset = min_e + i * config.line_spacing
             if offset > max_e:
                 offset = max_e
 
             line_e = offset
-            segments = self._polygon_segments_at_east(corners, line_e)
+            segments = self._polygon_segments_at_east(rot_corners, line_e)
             if not segments and abs(offset - max_e) < 1e-6 and max_e > min_e:
                 line_e = max_e - 1e-6
-                segments = self._polygon_segments_at_east(corners, line_e)
+                segments = self._polygon_segments_at_east(rot_corners, line_e)
 
-            # Fall back to the old bbox behavior only for degenerate polygons.
+            # Fall back to bbox only for degenerate polygons.
             if not segments:
                 segments = [(min_n, max_n)]
 
             for start_n, end_n in segments:
-                # Alternate direction for efficient zigzag traversal.
+                # Alternate direction for efficient lawnmower traversal.
                 if i % 2 != 0:
                     start_n, end_n = end_n, start_n
 
-                waypoints.append((start_n, line_e))
-                waypoints.append((end_n, line_e))
-        
-        return waypoints
+                rot_waypoints.append((start_n, line_e))
+                rot_waypoints.append((end_n, line_e))
+
+        # Rotate waypoints back to the original NED frame.
+        return self._rotate_corners(rot_waypoints, heading)
 
     def _polygon_segments_at_east(
         self,
@@ -234,52 +257,114 @@ class FieldCoveragePlanner:
                 segments.append((start_n, end_n))
         return segments
     
+    def _polygon_segments_at_north(
+        self,
+        corners: List[Tuple[float, float]],
+        north: float,
+    ) -> List[Tuple[float, float]]:
+        """Return east-coordinate intervals where a horizontal scanline is inside the polygon."""
+        if len(corners) < 3:
+            return []
+
+        intersections: List[float] = []
+        count = len(corners)
+        for idx in range(count):
+            n1, e1 = corners[idx]
+            n2, e2 = corners[(idx + 1) % count]
+
+            if abs(n2 - n1) < 1e-12:
+                continue
+            if (n1 <= north < n2) or (n2 <= north < n1):
+                t = (north - n1) / (n2 - n1)
+                intersections.append(e1 + t * (e2 - e1))
+
+        intersections.sort()
+        unique: List[float] = []
+        for value in intersections:
+            if not unique or abs(value - unique[-1]) > 1e-6:
+                unique.append(value)
+
+        segments: List[Tuple[float, float]] = []
+        for idx in range(0, len(unique) - 1, 2):
+            start_e = unique[idx]
+            end_e   = unique[idx + 1]
+            if abs(end_e - start_e) > 0.1:
+                segments.append((start_e, end_e))
+        return segments
+
     def _generate_spiral(
         self,
         corners: List[Tuple[float, float]],
         config: CoverageConfig
     ) -> List[Tuple[float, float]]:
         """
-        Generate spiral pattern from outside to inside.
-        
+        Generate inward spiral using contracted parallel-line passes.
+
+        Each inward layer is produced by shrinking the boundary polygon
+        by one ``line_spacing`` step and running a single parallel-line
+        sweep.  This keeps the spiral clipped to the actual polygon shape
+        rather than just its bounding box.
+
         Args:
             corners: Field corners in local NED
             config: Coverage configuration
-            
+
         Returns:
             List of waypoints in local NED coordinates
         """
-        # Calculate bounding box
-        north_vals = [n for n, e in corners]
-        east_vals = [e for n, e in corners]
-        min_n, max_n = min(north_vals), max(north_vals)
-        min_e, max_e = min(east_vals), max(east_vals)
-        
-        waypoints = []
+        import copy
+
         spacing = config.line_spacing
-        
-        # Start from outer rectangle and spiral inward
-        current_min_n, current_max_n = min_n, max_n
-        current_min_e, current_max_e = min_e, max_e
-        
-        while (current_max_n - current_min_n > spacing and
-               current_max_e - current_min_e > spacing):
-            # Top edge (left to right)
-            waypoints.append((current_max_n, current_min_e))
-            waypoints.append((current_max_n, current_max_e))
-            
-            # Right edge (top to bottom)
-            waypoints.append((current_min_n, current_max_e))
-            
-            # Bottom edge (right to left)
-            waypoints.append((current_min_n, current_min_e))
-            
-            # Move inward
-            current_min_n += spacing
-            current_max_n -= spacing
-            current_min_e += spacing
-            current_max_e -= spacing
-        
+        waypoints: List[Tuple[float, float]] = []
+
+        # Build successive inset layers.
+        # A simple inset: move each edge inward by *spacing*.
+        # We approximate this by shrinking the polygon toward its centroid.
+        current = list(corners)
+        layer = 0
+
+        while True:
+            # Generate one lawnmower pass over the current polygon layer.
+            layer_wps = self._generate_parallel_lines(current, config)
+            if not layer_wps:
+                break
+            waypoints.extend(layer_wps)
+
+            # Shrink polygon inward toward centroid by one spacing step.
+            cx = sum(n for n, e in current) / len(current)
+            cy = sum(e for n, e in current) / len(current)
+            shrunken = []
+            for n, e in current:
+                dn = cx - n
+                de = cy - e
+                dist = math.hypot(dn, de)
+                if dist < 1e-6:
+                    break  # polygon collapsed
+                scale = max(0.0, dist - spacing) / dist
+                shrunken.append((cx + (n - cx) * scale, cy + (e - cy) * scale))
+
+            if len(shrunken) < 3:
+                break
+
+            # Check whether the shrunken polygon has meaningful area left.
+            north_vals = [n for n, e in shrunken]
+            east_vals  = [e for n, e in shrunken]
+            if (max(north_vals) - min(north_vals) < spacing or
+                    max(east_vals) - min(east_vals) < spacing):
+                break
+
+            current = shrunken
+            layer += 1
+            # Safety cap: never more layers than twice the max-dim / spacing.
+            north_vals_orig = [n for n, e in corners]
+            east_vals_orig  = [e for n, e in corners]
+            max_dim = max(
+                max(north_vals_orig) - min(north_vals_orig),
+                max(east_vals_orig)  - min(east_vals_orig),
+            )
+            if layer > int(max_dim / spacing) + 2:
+                break
+
         return waypoints
     
     def _generate_grid(
@@ -288,30 +373,27 @@ class FieldCoveragePlanner:
         config: CoverageConfig
     ) -> List[Tuple[float, float]]:
         """
-        Generate grid pattern (both horizontal and vertical lines).
-        
+        Generate grid pattern (two perpendicular lawnmower passes).
+
+        The first pass uses ``config.heading``; the second pass is rotated
+        by 90° so that it sweeps the orthogonal direction.  Both passes are
+        polygon-clipped via ``_generate_parallel_lines``.
+
         Args:
             corners: Field corners in local NED
             config: Coverage configuration
-            
+
         Returns:
             List of waypoints in local NED coordinates
         """
-        # Generate horizontal lines
+        # First pass — along config.heading.
         horizontal = self._generate_parallel_lines(corners, config)
-        
-        # Generate vertical lines (rotate 90 degrees)
-        vertical_config = CoverageConfig(
-            pattern=config.pattern,
-            altitude=config.altitude,
-            overlap=config.overlap,
-            line_spacing=config.line_spacing,
-            speed=config.speed,
-            heading=config.heading + 90
+
+        # Second pass — perpendicular (heading + 90°).
+        vertical = self._generate_parallel_lines(
+            corners, config, _heading_override=config.heading + 90.0
         )
-        vertical = self._generate_parallel_lines(corners, vertical_config)
-        
-        # Combine both patterns
+
         return horizontal + vertical
     
     def _generate_zigzag(
@@ -320,26 +402,20 @@ class FieldCoveragePlanner:
         config: CoverageConfig
     ) -> List[Tuple[float, float]]:
         """
-        Generate zigzag pattern (no turns at ends).
-        
+        Generate zigzag pattern.
+
+        Identical to parallel lines — the lawnmower already alternates
+        direction per strip, producing a continuous zigzag path with no
+        wasted turn-back segments.
+
         Args:
             corners: Field corners in local NED
             config: Coverage configuration
-            
+
         Returns:
             List of waypoints in local NED coordinates
         """
-        # Similar to parallel lines but with diagonal connections
-        parallel = self._generate_parallel_lines(corners, config)
-        
-        # Remove every other waypoint to create zigzag
-        waypoints = []
-        for i in range(0, len(parallel), 2):
-            waypoints.append(parallel[i])
-            if i + 1 < len(parallel):
-                waypoints.append(parallel[i + 1])
-        
-        return waypoints
+        return self._generate_parallel_lines(corners, config)
     
     def _gps_to_local(self, lat: float, lon: float) -> Tuple[float, float]:
         """

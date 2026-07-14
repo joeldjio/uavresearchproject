@@ -28,6 +28,7 @@ Item {
         function onBuildStatusChanged(s)   { root._buildStatus = s }
         function onRepoValidChanged(v)     { root._repoValid   = v }
         function onSitlInstancesChanged()  { instanceList.model = ok() ? sitl.runningInstances() : [] }
+        // consoleModel kept for internal use even though ConsolePane is removed from UI
         function onSitlLogLine(line) {
             if (consoleModel.count >= 500) consoleModel.remove(0)
             consoleModel.append({ text: line })
@@ -47,13 +48,17 @@ Item {
             buildVehicleModel.indexOf((cfg.build || {}).vehicle || "copter"))
         simVehicleCombo.currentIndex   = Math.max(0,
             simVehicleModel.indexOf((cfg.sim    || {}).vehicle  || "ArduCopter"))
-        simFrameField.text         = (cfg.sim    || {}).frame   || ""
-        simLocationField.text      = (cfg.sim    || {}).location|| "CMAC"
+        simFrameCombo.currentIndex     = Math.max(0,
+            framesForVehicle(simVehicleModel[simVehicleCombo.currentIndex]).indexOf(
+                (cfg.sim || {}).frame || "X"))
+        simLocationCombo.currentIndex  = Math.max(0,
+            _allLocations.indexOf((cfg.sim || {}).location || "CMAC"))
         simTcpPortField.text       = String((cfg.sim || {}).tcp_port || 5760)
         simUdpPortField.text       = String((cfg.sim || {}).udp_port || 14550)
         simUdpHostField.text       = (cfg.sim    || {}).udp_host|| "127.0.0.1"
         swarmCountSpin.value       = (cfg.swarm  || {}).count   || 5
-        swarmLocationField.text    = (cfg.swarm  || {}).location|| "CMAC"
+        swarmLocationCombo.currentIndex = Math.max(0,
+            _allLocations.indexOf((cfg.swarm || {}).location || "CMAC"))
         swarmHeadingSpin.value     = (cfg.swarm  || {}).offset_heading || 90
         swarmSpacingSpin.value     = (cfg.swarm  || {}).offset_spacing || 10
         gzWorldField.text          = (cfg.gazebo || {}).world   || "iris_runway.sdf"
@@ -61,18 +66,72 @@ Item {
         gzStreamPortField.text     = String((cfg.gazebo || {}).stream_port || 5600)
     }
 
-    // ── Sub-tab labels ────────────────────────────────────────────────────────
+    // ── Sub-tab labels — "Geräte" removed, devices are inline in Sim/Swarm ───
     readonly property var _tabs: [
-        "Setup & Build", "Sim starten", "Swarm", "Geräte", "Parameter", "Gazebo", "Debug"
+        "Setup & Build", "Sim starten", "Swarm", "Parameter", "Gazebo", "Debug"
     ]
 
-    // ── Helper models (JS arrays used by ComboBoxes) ──────────────────────────
+    // ── Helper models ─────────────────────────────────────────────────────────
     readonly property var buildVehicleModel: ["copter","plane","rover","sub","heli"]
-    readonly property var simVehicleModel:   ["ArduCopter","ArduPlane","ArduRover","ArduSub","ArduHeli"]
+    readonly property var simVehicleModel:   ["ArduCopter","ArduPlane","ArduRover","ArduSub","ArduHeli",
+                                              "Helicopter","Blimp","AntennaTracker"]
     readonly property var speedupModel:      ["1","2","5","10","50"]
-    readonly property var simLocations: [
-        "CMAC","LLBH","Snowflake","KSFO","KOAK","HOME","ArduPilot_Park"
+
+    // Full frame map per vehicle (from sim_vehicle.py --help)
+    readonly property var _frameMap: ({
+        "ArduCopter":   ["+","X","quad","hexa","octa","tri","y6","djix","coaxcopter","hexa-cwx","octa-cwx",
+                         "octa-quad","gazebo-iris","heli","heli-blade360","heli-dual","heli-ddfptail",
+                         "heli-ddvptail","heli-gas","heli-quad","freestyle","bfx","calibration",
+                         "Callisto","IrisRos","airsim-copter","cwx","deca","deca-cwx","dodeca-hexa",
+                         "singlecopter","copter-PPP","quad-can"],
+        "ArduPlane":    ["plane","quadplane","glider","firefly","gazebo-zephyr","jsbsim","last_letter",
+                         "plane-3d","plane-dspoilers","plane-elevon","plane-ice","plane-jet",
+                         "plane-redundant","plane-soaring","plane-tailsitter","plane-vtail",
+                         "quadplane-PPP","quadplane-can","quadplane-cl84","quadplane-copter_tailsitter",
+                         "quadplane-ice","quadplane-tilt","quadplane-tilthvec","quadplane-tilttri",
+                         "quadplane-tilttrivec","quadplane-tri","scrimmage-plane","stratoblimp","CRRCSim","calibration"],
+        "ArduRover":    ["rover","rover-skid","rover-vectored","rover-omni3mecanum","sailboat",
+                         "sailboat-motor","balancebot","motorboat","motorboat-skid",
+                         "airsim-rover","gazebo-rover","calibration"],
+        "ArduSub":      ["vectored","vectored_6dof","gazebo-bluerov2"],
+        "ArduHeli":     ["heli","heli-blade360","heli-ddfptail","heli-ddvptail","heli-dual",
+                         "heli-gas","heli-quad"],
+        "Helicopter":   ["heli","heli-blade360","heli-ddfptail","heli-ddvptail","heli-dual",
+                         "heli-gas","heli-quad"],
+        "Blimp":        ["blimp","blimp-motor"],
+        "AntennaTracker":["tracker"]
+    })
+
+    // All known sim_vehicle.py locations
+    readonly property var _allLocations: [
+        "CMAC","CMAC2","CMAC_South","CMAC_PILOTSBOX","CMAC_PILOTSBOX2",
+        "OSRF0","OSRF0_PILOTSBOX",
+        "Kingaroy","AVC","AVC_copter","AVC_plane","McMillan","McMillan_East","TomCarpark",
+        "Ballarat","CRAMS","3DRBerkeley","BMAC","LGAT","BHV","QMAC","Karuizawa","Dalby",
+        "RFRanch","KSFO","NFSC","Rotherham","LeeField","Sterling","EPIgijon","PerkinsField",
+        "KNUI","Range11","Flicker","ElliottField","CobbCountyRC","GrupoSicoss","Garrawarra",
+        "Snarbyeidet","Breivikeidet","Hata","TagusPark","Marcopter","HMAS","RATBeach",
+        "Carstensz","Skyrocket","SkyViperFactory","KazakoshiPark","SKT","UChicago","Yachiyo",
+        "Tyndall","Elvenes","Kawachi","SpringValley","SpringValley2","SpringValley3",
+        "SpringValley4","SpringValleyRoad","Pyramid","AAMEastField","HachinoheMine",
+        "HighwayField","AAMWestField","EliField","Goretovka","Kris","ARACE_copter",
+        "ARACE_plane","ARACE_hand","NDRCC","Boquig","Semisopochnoi","Unalga","Rabi",
+        "KFC","KawaguchiLake","GrandCanyon","YPG","Yuma","Williams","WilliamsVtol",
+        "SCCMAS","ARPstrip_NZ","ARPstrip_NZ_S","ARPstrip_NZ_N","CMAC_NZ_E","CMAC_NZ_W",
+        "OSPN","OSP","KalaupapaCliffs","Portmoak","LakeGeorgeLookout",
+        "RF_AirStadium","RF_BuenaVista","RF_Castle","RF_Garage","Madera","Peg","SFO_Bay",
+        "Egge","Gundaroo","Kaga","UCSB","Jervis_Bay","NKRAFA","StMarysCountyRegional",
+        "RTAF_UTC","Colonche","LaHerradura","ARDUCOPTER_AUTOTEST","ANUSC","YUVIC",
+        "AlasDeLaSierra_E","AlasDeLaSierra_S","AlasDeLaSierra_W","AlasDeLaSierra_N",
+        "JuanDeLaCierva_E","JuanDeLaCierva_SE","JuanDeLaCierva_W","JuanDeLaCierva_NW",
+        "TrescasasField_NE","TrescasasField_SW"
     ]
+
+    // Computed frames list based on current vehicle selection
+    function framesForVehicle(v) {
+        var frames = _frameMap[v]
+        return frames ? frames : []
+    }
 
     // ── Colour helpers ────────────────────────────────────────────────────────
     function simColor(s) {
@@ -342,7 +401,7 @@ Item {
                                     columns: 2; columnSpacing: 10; rowSpacing: 6
 
                                     Text { text: "Board"; color: "#64748b"; font.pixelSize: 11 }
-                                    Text { text: "Vehicle"; color: "#64748b"; font.pixelSize: 11 }
+                                    Text { text: "Fahrzeug"; color: "#64748b"; font.pixelSize: 11 }
 
                                     // Board field (free-text + common presets)
                                     Rectangle {
@@ -452,321 +511,302 @@ Item {
                             Item { height: 12 }
                         }
                     }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-
-                    // ── Right: Console ────────────────────────────────────────
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
                 }
             }
 
             // ══════════════════════════════════════════════════════════════════
-            // TAB 1 — Sim starten
+            // TAB 1 — Sim starten  (full-width, no console)
             // ══════════════════════════════════════════════════════════════════
             Item {
                 anchors.fill: parent
                 visible: root._tab === 1
 
-                RowLayout {
-                    anchors { fill: parent; margins: 0 }
-                    spacing: 0
+                // Peripheral catalogue for this tab
+                property var _pCat: []
+                function _reloadPCat() { _pCat = ok() ? sitl.getPeripheralCatalogue() : [] }
+                onVisibleChanged: if (visible) _reloadPCat()
+                Component.onCompleted: _reloadPCat()
+                Connections { target: ok() ? sitl : null; function onPeripheralDevicesChanged() { parent._reloadPCat() } }
 
-                    ScrollView {
-                        Layout.preferredWidth: 380
-                        Layout.fillHeight: true
-                        clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollView {
+                    anchors.fill: parent
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                        ColumnLayout {
-                            width: 364
-                            anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
-                            spacing: 16
+                    ColumnLayout {
+                        width: parent.parent.width - 36   // 18px margin each side
+                        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
+                        spacing: 16
 
-                            Text { text: "SIM KONFIGURATION"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
+                        Text { text: "SIM KONFIGURATION"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
 
-                            GridLayout {
-                                Layout.fillWidth: true
-                                columns: 2; columnSpacing: 10; rowSpacing: 8
+                        // ── Vehicle + Frame dropdowns ──────────────────────────
+                        GridLayout {
+                            Layout.fillWidth: true
+                            columns: 2; columnSpacing: 10; rowSpacing: 8
 
-                                Text { text: "Vehicle"; color: "#64748b"; font.pixelSize: 11 }
-                                Text { text: "Frame"; color: "#64748b"; font.pixelSize: 11 }
+                            Text { text: "Fahrzeug"; color: "#64748b"; font.pixelSize: 11 }
+                            Text { text: "Rahmentyp"; color: "#64748b"; font.pixelSize: 11 }
 
-                                ComboBox {
-                                    id: simVehicleCombo
-                                    Layout.fillWidth: true; height: 34
-                                    model: root.simVehicleModel
-                                    background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
-                                    contentItem: Text { leftPadding: 10; text: simVehicleCombo.currentText; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
-                                    delegate: ItemDelegate {
-                                        width: simVehicleCombo.width
-                                        contentItem: Text { text: modelData; color: "#e2e8f0"; font.pixelSize: 12 }
-                                        background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
-                                    }
-                                    popup: Popup {
-                                        y: simVehicleCombo.height; width: simVehicleCombo.width; padding: 0
-                                        background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
-                                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: simVehicleCombo.delegateModel }
-                                    }
+                            ComboBox {
+                                id: simVehicleCombo
+                                Layout.fillWidth: true; height: 34
+                                model: root.simVehicleModel
+                                background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
+                                contentItem: Text { leftPadding: 10; text: simVehicleCombo.currentText; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                delegate: ItemDelegate {
+                                    width: simVehicleCombo.width
+                                    contentItem: Text { text: modelData; color: "#e2e8f0"; font.pixelSize: 12 }
+                                    background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
                                 }
-
-                                Rectangle {
-                                    Layout.fillWidth: true; height: 34; radius: 6
-                                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                    TextInput {
-                                        id: simFrameField
-                                        anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
-                                        verticalAlignment: TextInput.AlignVCenter
-                                        color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas"
-                                        Text { text: "X  /  hexa  /  gazebo-iris"; color: "#374151"; font: parent.font; visible: parent.text.length === 0; anchors.fill: parent; verticalAlignment: Text.AlignVCenter }
-                                    }
+                                popup: Popup {
+                                    y: simVehicleCombo.height; width: simVehicleCombo.width; padding: 0
+                                    background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
+                                    contentItem: ListView { clip: true; implicitHeight: Math.min(contentHeight, 300); model: simVehicleCombo.delegateModel; ScrollBar.vertical: ScrollBar {} }
                                 }
+                                // Rebuild frame combo when vehicle changes
+                                onCurrentTextChanged: { simFrameCombo.model = root.framesForVehicle(currentText); simFrameCombo.currentIndex = 0 }
+                            }
 
-                                Text { text: "Location"; color: "#64748b"; font.pixelSize: 11 }
-                                Text { text: "Speedup"; color: "#64748b"; font.pixelSize: 11 }
-
-                                Rectangle {
-                                    Layout.fillWidth: true; height: 34; radius: 6
-                                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                    TextInput {
-                                        id: simLocationField
-                                        anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
-                                        verticalAlignment: TextInput.AlignVCenter
-                                        color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas"
-                                        text: "CMAC"
-                                    }
+                            ComboBox {
+                                id: simFrameCombo
+                                Layout.fillWidth: true; height: 34
+                                model: root.framesForVehicle(simVehicleCombo.currentText)
+                                background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
+                                contentItem: Text { leftPadding: 10; text: simFrameCombo.currentText || "—"; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                delegate: ItemDelegate {
+                                    width: simFrameCombo.width
+                                    contentItem: Text { text: modelData; color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas" }
+                                    background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
                                 }
-
-                                ComboBox {
-                                    id: speedupCombo
-                                    Layout.fillWidth: true; height: 34
-                                    model: root.speedupModel
-                                    background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
-                                    contentItem: Text { leftPadding: 10; text: speedupCombo.currentText + "×"; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
-                                    delegate: ItemDelegate {
-                                        width: speedupCombo.width
-                                        contentItem: Text { text: modelData + "×"; color: "#e2e8f0"; font.pixelSize: 12 }
-                                        background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
-                                    }
-                                    popup: Popup {
-                                        y: speedupCombo.height; width: speedupCombo.width; padding: 0
-                                        background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
-                                        contentItem: ListView { clip: true; implicitHeight: contentHeight; model: speedupCombo.delegateModel }
-                                    }
+                                popup: Popup {
+                                    y: simFrameCombo.height; width: simFrameCombo.width; padding: 0
+                                    background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
+                                    contentItem: ListView { clip: true; implicitHeight: Math.min(contentHeight, 300); model: simFrameCombo.delegateModel; ScrollBar.vertical: ScrollBar {} }
                                 }
                             }
 
-                            // GCS connection
-                            ColumnLayout {
-                                Layout.fillWidth: true; spacing: 6
+                            Text { text: "Standort"; color: "#64748b"; font.pixelSize: 11 }
+                            Text { text: "Geschwindigkeit"; color: "#64748b"; font.pixelSize: 11 }
 
-                                Text { text: "GCS VERBINDUNG"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
-
-                                Row {
-                                    spacing: 12
-                                    RadioButton {
-                                        id: tcpRadio; text: "TCP"; checked: true
-                                        contentItem: Text { text: parent.text; color: "#e2e8f0"; font.pixelSize: 12; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter }
-                                    }
-                                    RadioButton {
-                                        id: udpRadio; text: "UDP (→ GCS)"
-                                        contentItem: Text { text: parent.text; color: "#e2e8f0"; font.pixelSize: 12; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter }
-                                    }
+                            ComboBox {
+                                id: simLocationCombo
+                                Layout.fillWidth: true; height: 34
+                                model: root._allLocations
+                                background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
+                                contentItem: Text { leftPadding: 10; text: simLocationCombo.currentText; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                delegate: ItemDelegate {
+                                    width: simLocationCombo.width
+                                    contentItem: Text { text: modelData; color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas" }
+                                    background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
                                 }
-
-                                // TCP port row
-                                RowLayout {
-                                    Layout.fillWidth: true; spacing: 8
-                                    visible: tcpRadio.checked
-                                    Text { text: "Port"; color: "#64748b"; font.pixelSize: 11; width: 50 }
-                                    Rectangle {
-                                        Layout.fillWidth: true; height: 32; radius: 5
-                                        color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                        TextInput {
-                                            id: simTcpPortField; text: "5760"
-                                            anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
-                                            verticalAlignment: TextInput.AlignVCenter
-                                            color: "#38bdf8"; font.pixelSize: 12; font.family: "Consolas"
-                                        }
-                                    }
-                                    Text { text: "→ tcp:127.0.0.1:" + simTcpPortField.text; color: "#38bdf8"; font.pixelSize: 10; font.family: "Consolas" }
-                                }
-
-                                // UDP row
-                                GridLayout {
-                                    Layout.fillWidth: true; columns: 2; columnSpacing: 8; rowSpacing: 6
-                                    visible: udpRadio.checked
-                                    Text { text: "GCS Host"; color: "#64748b"; font.pixelSize: 11 }
-                                    Text { text: "Port"; color: "#64748b"; font.pixelSize: 11 }
-                                    Rectangle {
-                                        Layout.fillWidth: true; height: 32; radius: 5
-                                        color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                        TextInput { id: simUdpHostField; text: "127.0.0.1"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas" }
-                                    }
-                                    Rectangle {
-                                        Layout.fillWidth: true; height: 32; radius: 5
-                                        color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                        TextInput { id: simUdpPortField; text: "14550"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#38bdf8"; font.pixelSize: 12; font.family: "Consolas" }
-                                    }
+                                popup: Popup {
+                                    y: simLocationCombo.height; width: simLocationCombo.width; padding: 0
+                                    background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
+                                    contentItem: ListView { clip: true; implicitHeight: Math.min(contentHeight, 280); model: simLocationCombo.delegateModel; ScrollBar.vertical: ScrollBar {} }
                                 }
                             }
 
-                            // Checkboxes
-                            Row { spacing: 16
-                                CheckBox { id: simMapCheck; checked: true; text: "--map"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
-                                CheckBox { id: simConsoleCheck; checked: true; text: "--console"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
-                                CheckBox { id: noMavproxyCheck; text: "--no-mavproxy"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
-                            }
-                            Row { spacing: 16
-                                CheckBox { id: wipeCheck; text: "--wipe-eeprom"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
-                            }
-
-                            // Extra args
-                            ColumnLayout { Layout.fillWidth: true; spacing: 4
-                                Text { text: "Extra Argumente"; color: "#64748b"; font.pixelSize: 11 }
-                                Rectangle {
-                                    Layout.fillWidth: true; height: 32; radius: 5
-                                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                    TextInput {
-                                        id: simExtraField
-                                        anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
-                                        verticalAlignment: TextInput.AlignVCenter
-                                        color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas"
-                                        Text { text: "--speedup 10  --instance 0  …"; color: "#374151"; font: parent.font; visible: parent.text.length === 0 }
-                                    }
+                            ComboBox {
+                                id: speedupCombo
+                                Layout.fillWidth: true; height: 34
+                                model: root.speedupModel
+                                background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
+                                contentItem: Text { leftPadding: 10; text: speedupCombo.currentText + "×"; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                delegate: ItemDelegate {
+                                    width: speedupCombo.width
+                                    contentItem: Text { text: modelData + "×"; color: "#e2e8f0"; font.pixelSize: 12 }
+                                    background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
+                                }
+                                popup: Popup {
+                                    y: speedupCombo.height; width: speedupCombo.width; padding: 0
+                                    background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
+                                    contentItem: ListView { clip: true; implicitHeight: contentHeight; model: speedupCombo.delegateModel }
                                 }
                             }
-
-                            // Generated command
-                            Rectangle {
-                                Layout.fillWidth: true; height: simCmdText.implicitHeight + 14; radius: 6
-                                color: "#080b10"; border.color: "#1e2535"; border.width: 1
-                                Text {
-                                    id: simCmdText
-                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
-                                    text: {
-                                        var parts = ["python3 Tools/autotest/sim_vehicle.py",
-                                                     "-v " + simVehicleCombo.currentText]
-                                        if (simFrameField.text.trim()) parts.push("-f " + simFrameField.text.trim())
-                                        if (simLocationField.text.trim()) parts.push("--location " + simLocationField.text.trim())
-                                        if (speedupCombo.currentText !== "1") parts.push("--speedup " + speedupCombo.currentText)
-                                        if (simMapCheck.checked && !noMavproxyCheck.checked) parts.push("--map")
-                                        if (simConsoleCheck.checked && !noMavproxyCheck.checked) parts.push("--console")
-                                        if (noMavproxyCheck.checked) parts.push("--no-mavproxy")
-                                        if (wipeCheck.checked) parts.push("--wipe-eeprom")
-                                        if (tcpRadio.checked && noMavproxyCheck.checked) parts.push('-A "--serial0=tcp:' + simTcpPortField.text + '"')
-                                        if (udpRadio.checked) parts.push('-A "--serial0=udpclient:' + simUdpHostField.text + ':' + simUdpPortField.text + '"')
-                                        if (simExtraField.text.trim()) parts.push(simExtraField.text.trim())
-                                        return parts.join(" \\\n  ")
-                                    }
-                                    color: "#38bdf8"; font.family: "Consolas"; font.pixelSize: 10; lineHeight: 1.6
-                                    wrapMode: Text.WrapAnywhere
-                                }
-                            }
-
-                            // Start / Stop buttons
-                            RowLayout { Layout.fillWidth: true; spacing: 8
-                                Rectangle {
-                                    Layout.fillWidth: true; height: 40; radius: 7
-                                    property bool _en: root._repoValid && root._simStatus !== "running"
-                                    color: !_en ? "#0d1117" : (startSimM.containsMouse ? "#15803d" : "#166534")
-                                    border.color: _en ? "#22c55e" : "#1f2937"; border.width: 1
-                                    Behavior on color { ColorAnimation { duration: 100 } }
-                                    Row { anchors.centerIn: parent; spacing: 6
-                                        Text { text: "▶"; color: parent.parent._en ? "#bbf7d0" : "#374151"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
-                                        Text { text: "Start Simulation"; color: parent.parent._en ? "#f0fdf4" : "#374151"; font.pixelSize: 13; font.weight: Font.Bold; anchors.verticalCenter: parent.verticalCenter }
-                                    }
-                                    MouseArea { id: startSimM; anchors.fill: parent; hoverEnabled: true; enabled: parent._en
-                                        onClicked: {
-                                            if (!ok()) return
-                                            sitl.launchSimVehicle(JSON.stringify({
-                                                vehicle:     simVehicleCombo.currentText,
-                                                frame:       simFrameField.text.trim(),
-                                                location:    simLocationField.text.trim(),
-                                                speedup:     parseInt(speedupCombo.currentText) || 1,
-                                                protocol:    tcpRadio.checked ? "tcp" : "udp",
-                                                tcp_port:    parseInt(simTcpPortField.text) || 5760,
-                                                udp_host:    simUdpHostField.text.trim(),
-                                                udp_port:    parseInt(simUdpPortField.text) || 14550,
-                                                use_map:     simMapCheck.checked,
-                                                use_console: simConsoleCheck.checked,
-                                                no_mavproxy: noMavproxyCheck.checked,
-                                                wipe:        wipeCheck.checked,
-                                                extra_args:  simExtraField.text.trim()
-                                            }))
-                                        }
-                                    }
-                                }
-
-                                Rectangle {
-                                    width: 72; height: 40; radius: 7
-                                    visible: root._simStatus === "running"
-                                    color: stopSimM.containsMouse ? "#7f1d1d" : "#1e2535"
-                                    border.color: "#ef4444"; border.width: 1
-                                    Row { anchors.centerIn: parent; spacing: 5
-                                        Text { text: "■"; color: "#fca5a5"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
-                                        Text { text: "Stop"; color: "#fca5a5"; font.pixelSize: 12; font.weight: Font.Bold; anchors.verticalCenter: parent.verticalCenter }
-                                    }
-                                    MouseArea { id: stopSimM; anchors.fill: parent; hoverEnabled: true
-                                        onClicked: { if (ok()) sitl.stopAll() } }
-                                }
-                            }
-
-                            // Running instances
-                            ListView {
-                                id: instanceList
-                                Layout.fillWidth: true
-                                height: Math.min(contentHeight, 120)
-                                clip: true; model: []; spacing: 4
-                                delegate: Rectangle {
-                                    width: instanceList.width; height: 34; radius: 5
-                                    color: "#161b27"; border.color: "#2d3748"; border.width: 1
-                                    Row {
-                                        anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 10 }
-                                        spacing: 10
-                                        Rectangle { width: 7; height: 7; radius: 3.5; color: "#22c55e"; anchors.verticalCenter: parent.verticalCenter }
-                                        Text { text: "#" + modelData.index + "  " + modelData.vehicle; color: "#e2e8f0"; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
-                                        Text { text: "tcp:127.0.0.1:" + modelData.port; color: "#38bdf8"; font.pixelSize: 11; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
-                                        Text { text: modelData.uptime + "s"; color: "#64748b"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
-                                    }
-                                }
-                            }
-
-                            Item { height: 12 }
                         }
-                    }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
+                        // ── GCS connection ────────────────────────────────────
+                        ColumnLayout {
+                            Layout.fillWidth: true; spacing: 6
+                            Text { text: "GCS VERBINDUNG"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
+                            Row { spacing: 12
+                                RadioButton { id: tcpRadio; text: "TCP"; checked: true; contentItem: Text { text: parent.text; color: "#e2e8f0"; font.pixelSize: 12; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                                RadioButton { id: udpRadio; text: "UDP (→ GCS)"; contentItem: Text { text: parent.text; color: "#e2e8f0"; font.pixelSize: 12; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                            }
+                            RowLayout { Layout.fillWidth: true; spacing: 8; visible: tcpRadio.checked
+                                Text { text: "Port"; color: "#64748b"; font.pixelSize: 11; width: 50 }
+                                Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                    TextInput { id: simTcpPortField; text: "5760"; anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#38bdf8"; font.pixelSize: 12; font.family: "Consolas" } }
+                                Text { text: "→ tcp:127.0.0.1:" + simTcpPortField.text; color: "#38bdf8"; font.pixelSize: 10; font.family: "Consolas" }
+                            }
+                            GridLayout { Layout.fillWidth: true; columns: 2; columnSpacing: 8; rowSpacing: 6; visible: udpRadio.checked
+                                Text { text: "GCS-Host"; color: "#64748b"; font.pixelSize: 11 }
+                                Text { text: "Port"; color: "#64748b"; font.pixelSize: 11 }
+                                Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                    TextInput { id: simUdpHostField; text: "127.0.0.1"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas" } }
+                                Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                    TextInput { id: simUdpPortField; text: "14550"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#38bdf8"; font.pixelSize: 12; font.family: "Consolas" } }
+                            }
+                        }
+
+                        // ── Flags ────────────────────────────────────────────
+                        Row { spacing: 16
+                            CheckBox { id: simMapCheck; checked: false; text: "--map"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                            CheckBox { id: simConsoleCheck; checked: false; text: "--console"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                            CheckBox { id: noMavproxyCheck; text: "--no-mavproxy"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                            CheckBox { id: wipeCheck; text: "--wipe"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                        }
+
+                        // ── Extra args ───────────────────────────────────────
+                        ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            Text { text: "Extra Argumente"; color: "#64748b"; font.pixelSize: 11 }
+                            Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                TextInput { id: simExtraField; anchors.fill: parent; anchors.leftMargin: 10; anchors.rightMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas"
+                                    Text { text: "--instance 0  …"; color: "#374151"; font: parent.font; visible: parent.text.length === 0 } } }
+                        }
+
+                        // ── Generated command preview ─────────────────────────
+                        Rectangle {
+                            Layout.fillWidth: true; height: simCmdText.implicitHeight + 14; radius: 6
+                            color: "#080b10"; border.color: "#1e2535"; border.width: 1
+                            Text {
+                                id: simCmdText
+                                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                                text: {
+                                    var parts = ["python3 Tools/autotest/sim_vehicle.py",
+                                                 "-v " + simVehicleCombo.currentText]
+                                    if (simFrameCombo.currentText) parts.push("-f " + simFrameCombo.currentText)
+                                    if (simLocationCombo.currentText) parts.push("--location " + simLocationCombo.currentText)
+                                    if (speedupCombo.currentText !== "1") parts.push("--speedup " + speedupCombo.currentText)
+                                    if (simMapCheck.checked && !noMavproxyCheck.checked) parts.push("--map")
+                                    if (simConsoleCheck.checked && !noMavproxyCheck.checked) parts.push("--console")
+                                    if (noMavproxyCheck.checked) parts.push("--no-mavproxy")
+                                    if (wipeCheck.checked) parts.push("--wipe-eeprom")
+                                    if (tcpRadio.checked && noMavproxyCheck.checked) parts.push('-A "--serial0=tcp:' + simTcpPortField.text + '"')
+                                    if (udpRadio.checked) parts.push('-A "--serial0=udpclient:' + simUdpHostField.text + ':' + simUdpPortField.text + '"')
+                                    if (simExtraField.text.trim()) parts.push(simExtraField.text.trim())
+                                    return parts.join(" \\\n  ")
+                                }
+                                color: "#38bdf8"; font.family: "Consolas"; font.pixelSize: 10; lineHeight: 1.6; wrapMode: Text.WrapAnywhere
+                            }
+                        }
+
+                        // ── Start / Stop ─────────────────────────────────────
+                        RowLayout { Layout.fillWidth: true; spacing: 8
+                            Rectangle {
+                                Layout.fillWidth: true; height: 40; radius: 7
+                                property bool _en: root._repoValid && root._simStatus !== "running"
+                                color: !_en ? "#0d1117" : (startSimM.containsMouse ? "#15803d" : "#166534")
+                                border.color: _en ? "#22c55e" : "#1f2937"; border.width: 1
+                                Behavior on color { ColorAnimation { duration: 100 } }
+                                Row { anchors.centerIn: parent; spacing: 6
+                                    Text { text: "▶"; color: parent.parent._en ? "#bbf7d0" : "#374151"; font.pixelSize: 14; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Simulation starten"; color: parent.parent._en ? "#f0fdf4" : "#374151"; font.pixelSize: 13; font.weight: Font.Bold; anchors.verticalCenter: parent.verticalCenter }
+                                }
+                                MouseArea { id: startSimM; anchors.fill: parent; hoverEnabled: true; enabled: parent._en
+                                    onClicked: {
+                                        if (!ok()) return
+                                        sitl.launchSimVehicle(JSON.stringify({
+                                            vehicle:     simVehicleCombo.currentText,
+                                            frame:       simFrameCombo.currentText,
+                                            location:    simLocationCombo.currentText,
+                                            speedup:     parseInt(speedupCombo.currentText) || 1,
+                                            protocol:    tcpRadio.checked ? "tcp" : "udp",
+                                            tcp_port:    parseInt(simTcpPortField.text) || 5760,
+                                            udp_host:    simUdpHostField.text.trim(),
+                                            udp_port:    parseInt(simUdpPortField.text) || 14550,
+                                            use_map:     simMapCheck.checked,
+                                            use_console: simConsoleCheck.checked,
+                                            no_mavproxy: noMavproxyCheck.checked,
+                                            wipe:        wipeCheck.checked,
+                                            extra_args:  simExtraField.text.trim()
+                                        }))
+                                    }
+                                }
+                            }
+                            Rectangle {
+                                width: 72; height: 40; radius: 7
+                                visible: root._simStatus === "running"
+                                color: stopSimM.containsMouse ? "#7f1d1d" : "#1e2535"
+                                border.color: "#ef4444"; border.width: 1
+                                Row { anchors.centerIn: parent; spacing: 5
+                                    Text { text: "■"; color: "#fca5a5"; font.pixelSize: 12; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "Stoppen"; color: "#fca5a5"; font.pixelSize: 12; font.weight: Font.Bold; anchors.verticalCenter: parent.verticalCenter }
+                                }
+                                MouseArea { id: stopSimM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: { if (ok()) sitl.stopAll() } }
+                            }
+                        }
+
+                        // ── Running instances ────────────────────────────────
+                        ListView {
+                            id: instanceList
+                            Layout.fillWidth: true
+                            height: Math.min(contentHeight, 120); clip: true; model: []; spacing: 4
+                            delegate: Rectangle {
+                                width: instanceList.width; height: 34; radius: 5
+                                color: "#161b27"; border.color: "#2d3748"; border.width: 1
+                                Row {
+                                    anchors.left: parent.left; anchors.verticalCenter: parent.verticalCenter; anchors.leftMargin: 10; spacing: 10
+                                    Rectangle { width: 7; height: 7; radius: 3.5; color: "#22c55e"; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "#" + modelData.index + "  " + modelData.vehicle; color: "#e2e8f0"; font.pixelSize: 11; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: "tcp:127.0.0.1:" + modelData.port; color: "#38bdf8"; font.pixelSize: 11; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
+                                    Text { text: modelData.uptime + "s"; color: "#64748b"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                                }
+                            }
+                        }
+
+                        // ── Geräte (Peripherals) inline ───────────────────────
+                        Rectangle { Layout.fillWidth: true; height: 1; color: "#2d3748" }
+                        Text { text: "GERÄTE / PERIPHERALS"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
+                        Text { text: "Aktivierte Geräte werden beim nächsten Start als Parameter eingebaut."; color: "#64748b"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
+
+                        Text { text: "SENSOREN"; font.pixelSize: 9; font.weight: Font.Bold; color: "#475569"; font.letterSpacing: 0.8 }
+                        PeripheralSection { catalogue: parent.parent.parent._pCat; category: "sensor" }
+
+                        Text { text: "UMGEBUNG"; font.pixelSize: 9; font.weight: Font.Bold; color: "#475569"; font.letterSpacing: 0.8 }
+                        PeripheralSection { catalogue: parent.parent.parent._pCat; category: "environment" }
+
+                        Text { text: "KAMERA / DISPLAY"; font.pixelSize: 9; font.weight: Font.Bold; color: "#475569"; font.letterSpacing: 0.8 }
+                        PeripheralSection { catalogue: parent.parent.parent._pCat; category: "camera" }
+                        PeripheralSection { catalogue: parent.parent.parent._pCat; category: "display" }
+
+                        Item { height: 16 }
+                    }
                 }
             }
 
             // ══════════════════════════════════════════════════════════════════
-            // TAB 2 — Swarm
+            // TAB 2 — Swarm  (full-width, no console)
             // ══════════════════════════════════════════════════════════════════
             Item {
                 anchors.fill: parent
                 visible: root._tab === 2
 
-                RowLayout {
-                    anchors { fill: parent; margins: 0 }
-                    spacing: 0
+                property var _pCatSwarm: []
+                function _reloadPCatSwarm() { _pCatSwarm = ok() ? sitl.getPeripheralCatalogue() : [] }
+                onVisibleChanged: if (visible) _reloadPCatSwarm()
+                Component.onCompleted: _reloadPCatSwarm()
+                Connections { target: ok() ? sitl : null; function onPeripheralDevicesChanged() { parent._reloadPCatSwarm() } }
 
-                    ScrollView {
-                        Layout.preferredWidth: 380; Layout.fillHeight: true; clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                ScrollView {
+                    anchors.fill: parent
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                        ColumnLayout {
-                            width: 364
-                            anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
-                            spacing: 16
+                    ColumnLayout {
+                        width: parent.parent.width - 36
+                        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
+                        spacing: 16
 
-                            Text { text: "SWARM KONFIGURATION"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
+                        Text { text: "SWARM KONFIGURATION"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
 
                             GridLayout {
                                 Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 8
 
                                 Text { text: "Anzahl Drohnen"; color: "#64748b"; font.pixelSize: 11 }
-                                Text { text: "Location"; color: "#64748b"; font.pixelSize: 11 }
+                                Text { text: "Standort"; color: "#64748b"; font.pixelSize: 11 }
 
                                 SpinBox {
                                     id: swarmCountSpin; from: 2; to: 20; value: 5
@@ -780,10 +820,22 @@ Item {
                                     down.indicator: Rectangle { x: swarmCountSpin.width - 28; y: swarmCountSpin.height / 2; width: 28; height: swarmCountSpin.height / 2; color: "transparent"; Text { text: "▼"; color: "#94a3b8"; font.pixelSize: 9; anchors.centerIn: parent } }
                                 }
 
-                                Rectangle {
-                                    Layout.fillWidth: true; height: 34; radius: 6
-                                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                    TextInput { id: swarmLocationField; text: "CMAC"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas" }
+                                ComboBox {
+                                    id: swarmLocationCombo
+                                    Layout.fillWidth: true; height: 34
+                                    model: root._allLocations
+                                    background: Rectangle { color: "#1e2535"; radius: 6; border.color: "#2d3748"; border.width: 1 }
+                                    contentItem: Text { leftPadding: 10; text: swarmLocationCombo.currentText; color: "#e2e8f0"; font.pixelSize: 12; verticalAlignment: Text.AlignVCenter }
+                                    delegate: ItemDelegate {
+                                        width: swarmLocationCombo.width
+                                        contentItem: Text { text: modelData; color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas" }
+                                        background: Rectangle { color: hovered ? "#2d3748" : "#1e2535" }
+                                    }
+                                    popup: Popup {
+                                        y: swarmLocationCombo.height; width: swarmLocationCombo.width; padding: 0
+                                        background: Rectangle { color: "#1e2535"; border.color: "#2d3748"; radius: 6 }
+                                        contentItem: ListView { clip: true; implicitHeight: Math.min(contentHeight, 280); model: swarmLocationCombo.delegateModel; ScrollBar.vertical: ScrollBar {} }
+                                    }
                                 }
                             }
 
@@ -852,12 +904,11 @@ Item {
                                     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
                                     text: {
                                         var p = ["python3 Tools/autotest/sim_vehicle.py",
-                                                 "-v " + (root.simVehicleModel[0] || "ArduCopter"),
+                                                 "-v " + simVehicleCombo.currentText,
                                                  "--count " + swarmCountSpin.value,
-                                                 "--location " + (swarmLocationField.text || "CMAC")]
+                                                 "--location " + swarmLocationCombo.currentText]
                                         if (autoSysidCheck.checked) p.push("--auto-sysid")
                                         if (mcastCheck.checked) p.push("--mcast")
-                                        p.push("--map"); p.push("--console")
                                         if (offsetLineRadio.checked)
                                             p.push("--auto-offset-line " + swarmHeadingSpin.value + "," + swarmSpacingSpin.value)
                                         else if (swarmFileField.text.trim())
@@ -886,13 +937,13 @@ Item {
                                             count:          swarmCountSpin.value,
                                             auto_sysid:     autoSysidCheck.checked,
                                             mcast:          mcastCheck.checked,
-                                            location:       swarmLocationField.text.trim(),
+                                            location:       swarmLocationCombo.currentText,
                                             offset_mode:    offsetLineRadio.checked ? "line" : "file",
                                             offset_heading: swarmHeadingSpin.value,
                                             offset_spacing: swarmSpacingSpin.value,
                                             swarm_file:     swarmFileField.text.trim(),
-                                            use_map:        true,
-                                            use_console:    true
+                                            use_map:        false,
+                                            use_console:    false
                                         }))
                                     }
                                 }
@@ -927,122 +978,31 @@ Item {
                                 }
                             }
 
-                            Item { height: 12 }
-                        }
-                    }
+                            // ── Geräte inline ─────────────────────────────────
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#2d3748" }
+                            Text { text: "GERÄTE / PERIPHERALS"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
+                            Text { text: "Aktivierte Geräte werden beim nächsten Start als Parameter eingebaut."; color: "#64748b"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
 
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
-                }
-            }
-
-            // ══════════════════════════════════════════════════════════════════
-            // ══════════════════════════════════════════════════════════════════
-            // TAB 3 — Geräte / Peripherals
-            // ══════════════════════════════════════════════════════════════════
-            Item {
-                id: periTab
-                anchors.fill: parent
-                visible: root._tab === 3
-
-                // Reload catalogue whenever tab becomes visible or devices change
-                property var _catalogue: []
-                function _reload() {
-                    _catalogue = ok() ? sitl.getPeripheralCatalogue() : []
-                }
-                onVisibleChanged: if (visible) _reload()
-                Component.onCompleted: _reload()
-
-                Connections {
-                    target: ok() ? sitl : null
-                    function onPeripheralDevicesChanged() { periTab._reload() }
-                }
-
-                RowLayout {
-                    anchors { fill: parent; margins: 0 }
-                    spacing: 0
-
-                    ScrollView {
-                        Layout.preferredWidth: 420
-                        Layout.fillHeight: true
-                        clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                        ColumnLayout {
-                            width: 404
-                            anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
-                            spacing: 20
-
-                            Text { text: "SIMULIERTE GERÄTE / PERIPHERALS"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
-
-                            // Info banner
-                            Rectangle {
-                                Layout.fillWidth: true; height: periInfoCol.implicitHeight + 16; radius: 6
-                                color: "#0a0f1a"; border.color: "#1e3a5f"; border.width: 1
-                                ColumnLayout {
-                                    id: periInfoCol
-                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-                                    spacing: 3
-                                    Text { text: "Aktivierte Geräte werden beim nächsten Sim-Start als Parameter eingebaut."; color: "#64748b"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                                    Text { text: "Einige Geräte erfordern einen Neustart nach dem ersten Setzen (EEPROM-Persistierung)."; color: "#64748b"; font.pixelSize: 10; wrapMode: Text.WordWrap; Layout.fillWidth: true }
-                                }
-                            }
-
-                            // Category: Sensoren
                             Text { text: "SENSOREN"; font.pixelSize: 9; font.weight: Font.Bold; color: "#475569"; font.letterSpacing: 0.8 }
-                            PeripheralSection { catalogue: periTab._catalogue; category: "sensor" }
-
-                            // Category: Umgebung
+                            PeripheralSection { catalogue: parent.parent.parent._pCatSwarm; category: "sensor" }
                             Text { text: "UMGEBUNG"; font.pixelSize: 9; font.weight: Font.Bold; color: "#475569"; font.letterSpacing: 0.8 }
-                            PeripheralSection { catalogue: periTab._catalogue; category: "environment" }
-
-                            // Category: Kamera / Display
+                            PeripheralSection { catalogue: parent.parent.parent._pCatSwarm; category: "environment" }
                             Text { text: "KAMERA / DISPLAY"; font.pixelSize: 9; font.weight: Font.Bold; color: "#475569"; font.letterSpacing: 0.8 }
-                            PeripheralSection { catalogue: periTab._catalogue; category: "camera" }
-                            PeripheralSection { catalogue: periTab._catalogue; category: "display" }
+                            PeripheralSection { catalogue: parent.parent.parent._pCatSwarm; category: "camera" }
+                            PeripheralSection { catalogue: parent.parent.parent._pCatSwarm; category: "display" }
 
-                            // Pending params summary
-                            Rectangle {
-                                Layout.fillWidth: true; height: pendingParamsCol.implicitHeight + 16; radius: 6
-                                color: "#0d1117"; border.color: "#2d3748"; border.width: 1
-                                visible: ok() && JSON.parse(sitl.getPendingParams && sitl.getPendingParams() || "{}") !== null
-
-                                ColumnLayout {
-                                    id: pendingParamsCol
-                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
-                                    spacing: 4
-                                    Text { text: "AUSSTEHENDE PARAMETER"; font.pixelSize: 9; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
-                                    Text {
-                                        text: {
-                                            if (!ok()) return "—"
-                                            var p = {}
-                                            try { p = JSON.parse(sitl.getPendingParams()) } catch(e) { return "—" }
-                                            var keys = Object.keys(p)
-                                            if (keys.length === 0) return "Keine ausstehenden Parameter"
-                                            return keys.map(function(k){ return k + " = " + p[k] }).join("\n")
-                                        }
-                                        color: "#38bdf8"; font.pixelSize: 10; font.family: "Consolas"
-                                        wrapMode: Text.WordWrap; Layout.fillWidth: true
-                                    }
-                                }
-                            }
-
-                            Item { height: 12 }
+                            Item { height: 16 }
                         }
                     }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
                 }
-            }
 
             // ══════════════════════════════════════════════════════════════════
-            // TAB 4 — Parameter (SIM_* Browser + Live MAVLink)
+            // TAB 3 — Parameter (SIM_* Browser + Live MAVLink)
             // ══════════════════════════════════════════════════════════════════
             Item {
                 id: paramTab
                 anchors.fill: parent
-                visible: root._tab === 4
+                visible: root._tab === 3
 
                 // Static catalogue params (from sitl.getKnownParams)
                 property var  _params:      []
@@ -1103,6 +1063,7 @@ Item {
 
                 Connections {
                     target: _swarmOk() ? swarm : null
+                    ignoreUnknownSignals: true
                     function onParamsLoaded(droneId, paramsJson) {
                         if (droneId !== paramTab._liveTargetId) return
                         paramTab._liveLoading = false
@@ -1111,14 +1072,9 @@ Item {
                     }
                 }
 
-                RowLayout {
+                ColumnLayout {
                     anchors { fill: parent; margins: 0 }
                     spacing: 0
-
-                    ColumnLayout {
-                        Layout.preferredWidth: 500
-                        Layout.fillHeight: true
-                        spacing: 0
 
                         // ── Header Row 1: mode toggle + drone selector ───────
                         Rectangle {
@@ -1627,30 +1583,27 @@ Item {
                             }
                         }
                     }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
                 }
-            }
 
             // ══════════════════════════════════════════════════════════════════
-            // TAB 5 — Gazebo
+            // TAB 4 — Gazebo
             // ══════════════════════════════════════════════════════════════════
             Item {
                 anchors.fill: parent
-                visible: root._tab === 5
+                visible: root._tab === 4
 
-                RowLayout {
-                    anchors { fill: parent; margins: 0 }
-                    spacing: 0
+                ScrollView {
+                    anchors.fill: parent
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    ScrollView {
-                        Layout.preferredWidth: 380; Layout.fillHeight: true; clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                        ColumnLayout {
-                            width: 364
-                            anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
+                    ColumnLayout {
+                        id: gzTabContent
+                        // Overlay toggle state — mirrored to/from MapView
+                        property bool _lidarOnMap: false
+                        property bool _flowOnMap:  false
+                        width: parent.parent.width - 36
+                        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
                             spacing: 16
 
                             // Availability badges
@@ -1766,10 +1719,182 @@ Item {
                                     MouseArea { id: gzSitlM; anchors.fill: parent; hoverEnabled: true; enabled: root._repoValid
                                         onClicked: {
                                             if (!ok()) return
-                                            sitl.launchSimVehicle(JSON.stringify({ vehicle: "ArduCopter", frame: gzFrameField.text.trim(), extra_args: "--model JSON", use_map: true, use_console: true }))
+                                            sitl.launchSimVehicle(JSON.stringify({ vehicle: "ArduCopter", frame: gzFrameField.text.trim(), extra_args: "--model JSON", use_map: false, use_console: false }))
                                         }
                                     }
                                 }
+                            }
+
+                            // ── Sensoren: LiDAR & Optical Flow ───────────────
+                            Rectangle { Layout.fillWidth: true; height: 1; color: "#2d3748"; Layout.topMargin: 4 }
+                            Text { text: "SENSOREN (LIDAR / OPTICAL FLOW)"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
+
+                            // ── LiDAR ─────────────────────────────────────────
+                            Rectangle {
+                                Layout.fillWidth: true; radius: 7
+                                height: lidarSensorCol.implicitHeight + 20
+                                color: "#07101a"; border.color: "#1e3a5f"; border.width: 1
+
+                                ColumnLayout {
+                                    id: lidarSensorCol
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                                    spacing: 8
+
+                                    Text { text: "LIDAR (gz.transport)"; color: "#60a5fa"; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
+                                        Text { text: "Topic"; color: "#64748b"; font.pixelSize: 11; Layout.preferredWidth: 46 }
+                                        Rectangle {
+                                            Layout.fillWidth: true; height: 30; radius: 5
+                                            color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                            TextInput {
+                                                id: lidarTopicField
+                                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                                                verticalAlignment: TextInput.AlignVCenter
+                                                color: "#38bdf8"; font.pixelSize: 11; font.family: "Consolas"
+                                                text: "/lidar/scan"
+                                            }
+                                        }
+                                    }
+
+                                    // Two action buttons per sensor
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
+
+                                        // Toggle map overlay (uses MAVLink OBSTACLE_DISTANCE)
+                                        Rectangle {
+                                            Layout.fillWidth: true; height: 34; radius: 6
+                                            property bool _on: gzTabContent._lidarOnMap
+                                            color: _on ? "#1e3a5f" : (lidarMapM.containsMouse ? "#0f1e30" : "#07101a")
+                                            border.color: _on ? "#2563eb" : "#334155"; border.width: 1
+                                            Behavior on color { ColorAnimation { duration: 100 } }
+                                            Text {
+                                                text: parent._on ? "◉ Auf Karte (aktiv)" : "◎ Auf Karte zeigen"
+                                                color: parent._on ? "#93c5fd" : "#475569"
+                                                font.pixelSize: 10; font.weight: Font.Bold; anchors.centerIn: parent
+                                            }
+                                            MouseArea {
+                                                id: lidarMapM; anchors.fill: parent; hoverEnabled: true
+                                                onClicked: {
+                                                    if (!ok()) return
+                                                    var newState = !parent._on
+                                                    gzTabContent._lidarOnMap = newState
+                                                    sitl.setSensorOverlay("lidar", newState)
+                                                }
+                                            }
+                                        }
+
+                                        // Open OpenCV viewer terminal
+                                        Rectangle {
+                                            width: 120; height: 34; radius: 6
+                                            property bool _ok: ok()
+                                            color: !_ok ? "#0d1117" : (lidarViewM.containsMouse ? "#1e3a5f" : "#0d1623")
+                                            border.color: _ok ? "#2563eb" : "#1f2937"; border.width: 1
+                                            Text { text: "▶ OpenCV Fenster"; color: parent._ok ? "#93c5fd" : "#374151"; font.pixelSize: 10; anchors.centerIn: parent }
+                                            MouseArea { id: lidarViewM; anchors.fill: parent; hoverEnabled: true; enabled: parent._ok
+                                                onClicked: sitl.launchLidarViewer(lidarTopicField.text.trim() || "/lidar/scan") }
+                                        }
+                                    }
+
+                                    // Hint: map overlay uses MAVLink, not gz.transport
+                                    Text {
+                                        text: "Karten-Overlay = MAVLink OBSTACLE_DISTANCE (→ PRX1_TYPE=2)\nOpenCV Fenster = gz.transport direkt"
+                                        color: "#334155"; font.pixelSize: 9; font.family: "Consolas"
+                                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+
+                            // ── Optical Flow ───────────────────────────────────
+                            Rectangle {
+                                Layout.fillWidth: true; radius: 7
+                                height: flowSensorCol.implicitHeight + 20
+                                color: "#0d0718"; border.color: "#3b0764"; border.width: 1
+
+                                ColumnLayout {
+                                    id: flowSensorCol
+                                    anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                                    spacing: 8
+
+                                    Text { text: "OPTICAL FLOW / KAMERA (gz.transport)"; color: "#a78bfa"; font.pixelSize: 10; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
+                                        Text { text: "Topic"; color: "#64748b"; font.pixelSize: 11; Layout.preferredWidth: 46 }
+                                        Rectangle {
+                                            Layout.fillWidth: true; height: 30; radius: 5
+                                            color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                            TextInput {
+                                                id: flowTopicField
+                                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                                                verticalAlignment: TextInput.AlignVCenter
+                                                color: "#c4b5fd"; font.pixelSize: 11; font.family: "Consolas"
+                                                text: "/flow_camera/image"
+                                            }
+                                        }
+                                    }
+
+                                    RowLayout {
+                                        Layout.fillWidth: true; spacing: 6
+
+                                        // Toggle map overlay (uses MAVLink OPTICAL_FLOW)
+                                        Rectangle {
+                                            Layout.fillWidth: true; height: 34; radius: 6
+                                            property bool _on: gzTabContent._flowOnMap
+                                            color: _on ? "#3b0764" : (flowMapM.containsMouse ? "#200540" : "#0d0718")
+                                            border.color: _on ? "#7c3aed" : "#334155"; border.width: 1
+                                            Behavior on color { ColorAnimation { duration: 100 } }
+                                            Text {
+                                                text: parent._on ? "◉ Auf Karte (aktiv)" : "◎ Auf Karte zeigen"
+                                                color: parent._on ? "#c4b5fd" : "#475569"
+                                                font.pixelSize: 10; font.weight: Font.Bold; anchors.centerIn: parent
+                                            }
+                                            MouseArea {
+                                                id: flowMapM; anchors.fill: parent; hoverEnabled: true
+                                                onClicked: {
+                                                    if (!ok()) return
+                                                    var newState = !parent._on
+                                                    gzTabContent._flowOnMap = newState
+                                                    sitl.setSensorOverlay("flow", newState)
+                                                }
+                                            }
+                                        }
+
+                                        // Open OpenCV viewer terminal
+                                        Rectangle {
+                                            width: 120; height: 34; radius: 6
+                                            property bool _ok: ok()
+                                            color: !_ok ? "#0d1117" : (flowViewM.containsMouse ? "#3b0764" : "#1a0a28")
+                                            border.color: _ok ? "#7c3aed" : "#1f2937"; border.width: 1
+                                            Text { text: "▶ OpenCV Fenster"; color: parent._ok ? "#c4b5fd" : "#374151"; font.pixelSize: 10; anchors.centerIn: parent }
+                                            MouseArea { id: flowViewM; anchors.fill: parent; hoverEnabled: true; enabled: parent._ok
+                                                onClicked: sitl.launchFlowViewer(flowTopicField.text.trim() || "/flow_camera/image") }
+                                        }
+                                    }
+
+                                    Text {
+                                        text: "Karten-Overlay = MAVLink OPTICAL_FLOW  |  OpenCV Fenster = gz.transport direkt"
+                                        color: "#334155"; font.pixelSize: 9; font.family: "Consolas"
+                                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                                    }
+                                }
+                            }
+
+                            // Stop all viewer windows button
+                            Rectangle {
+                                Layout.fillWidth: true; height: 30; radius: 6
+                                color: stopViewersM.containsMouse ? "#450a0a" : "#1a0a0a"
+                                border.color: "#7f1d1d"; border.width: 1
+                                Text { text: "■ Alle Viewer-Fenster schließen"; color: "#fca5a5"; font.pixelSize: 10; font.weight: Font.Bold; anchors.centerIn: parent }
+                                MouseArea { id: stopViewersM; anchors.fill: parent; hoverEnabled: true
+                                    onClicked: { if (ok()) sitl.stopViewers() } }
+                            }
+
+                            Text {
+                                text: "Benötigt: pip install opencv-python  +  gz.transport13/gz.msgs10 aus gz_ws"
+                                color: "#374151"; font.pixelSize: 9; font.family: "Consolas"
+                                Layout.fillWidth: true; wrapMode: Text.WordWrap
                             }
 
                             // ── In-App Video Stream ───────────────────────────
@@ -1845,7 +1970,7 @@ Item {
                             }
 
                             GridLayout { Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
-                                Text { text: "Stream URL"; color: "#64748b"; font.pixelSize: 11 }
+                                Text { text: "Stream-URL"; color: "#64748b"; font.pixelSize: 11 }
                                 Text { text: "Ziel"; color: "#64748b"; font.pixelSize: 11 }
 
                                 Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
@@ -1926,30 +2051,23 @@ Item {
                             Item { height: 12 }
                         }
                     }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
-                }
             }
 
             // ══════════════════════════════════════════════════════════════════
-            // TAB 6 — Debug & MAVProxy
+            // TAB 5 — Debug & MAVProxy
             // ══════════════════════════════════════════════════════════════════
             Item {
                 anchors.fill: parent
-                visible: root._tab === 6
+                visible: root._tab === 5
 
-                RowLayout {
-                    anchors { fill: parent; margins: 0 }
-                    spacing: 0
+                ScrollView {
+                    anchors.fill: parent
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
 
-                    ScrollView {
-                        Layout.preferredWidth: 380; Layout.fillHeight: true; clip: true
-                        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-
-                        ColumnLayout {
-                            width: 364
-                            anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
+                    ColumnLayout {
+                        width: parent.parent.width - 36
+                        anchors { left: parent.left; leftMargin: 18; top: parent.top; topMargin: 18 }
                             spacing: 16
 
                             Text { text: "MAVPROXY"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
@@ -1961,8 +2079,8 @@ Item {
                             }
 
                             Row { spacing: 12
-                                CheckBox { id: mavMapCheck; checked: true; text: "--map"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
-                                CheckBox { id: mavConsoleCheck; checked: true; text: "--console"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                                CheckBox { id: mavMapCheck; checked: false; text: "--map"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
+                                CheckBox { id: mavConsoleCheck; checked: false; text: "--console"; contentItem: Text { text: parent.text; color: "#94a3b8"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
                             }
 
                             // Buttons row 1
@@ -2121,10 +2239,6 @@ Item {
                             Item { height: 12 }
                         }
                     }
-
-                    Rectangle { width: 1; Layout.fillHeight: true; color: "#2d3748" }
-                    ConsolePane { Layout.fillWidth: true; Layout.fillHeight: true }
-                }
             }
         }
     }
