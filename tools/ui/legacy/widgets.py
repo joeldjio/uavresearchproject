@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont, QPainterPath, QPolygonF
 from PySide6.QtCore import Qt, QPointF, QRectF
 
-from tools.ui.style import Colors, STATE_COLORS, DRONE_COLORS
+from tools.ui.legacy.style import Colors, STATE_COLORS, DRONE_COLORS
 
 
 # ── Metric Card ───────────────────────────────────────────────────────────────

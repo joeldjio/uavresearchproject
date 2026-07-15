@@ -63,7 +63,7 @@ Live-Sensordaten direkt als PIP-Overlays auf der Karte:
 
 ---
 
-### Gazebo → ArduPilot MAVLink Sensor-Bridge (`tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py`)
+### Gazebo → ArduPilot MAVLink Sensor-Bridge (`tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py`)
 
 Neue Bridge-Datei für SITL **und echte Hardware**:
 
@@ -92,10 +92,10 @@ Neue Bridge-Datei für SITL **und echte Hardware**:
 #### Verwendung
 ```bash
 # SITL (Standard)
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py --no-display
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py --no-display
 
 # Echte Hardware
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py \
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py \
     --mavlink /dev/ttyACM0:115200 \
     --camera-topic /flow_camera/image \
     --lidar-topic /lidar/scan \
@@ -132,7 +132,7 @@ Neuer Bereich **„SENSOR BRIDGE — GAZEBO → ARDUPILOT"** am Ende des Gimbal-
 
 ---
 
-### Viewer-Skripte (`tools/ui/gz_viewers/`)
+### Viewer-Skripte (`tools/ui/gz_bridge/`)
 
 | Datei | Beschreibung |
 |---|---|
@@ -202,9 +202,9 @@ Neuer Bereich **„SENSOR BRIDGE — GAZEBO → ARDUPILOT"** am Ende des Gimbal-
 | `tools/ui/qml/components/InstrBar.qml` | Geändert |
 | `tools/ui/backend.py` | Geändert |
 | `tools/ui/context/mission_context.py` | Geändert |
-| `tools/ui/gz_viewers/lidar_viewer.py` | **Neu** |
-| `tools/ui/gz_viewers/flow_viewer.py` | **Neu** |
-| `tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py` | **Neu** |
+| `tools/ui/gz_bridge/lidar_viewer.py` | **Neu** |
+| `tools/ui/gz_bridge/flow_viewer.py` | **Neu** |
+| `tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py` | **Neu** |
 | `skymeshx/control/field_coverage.py` | Geändert |
 | `skymeshx/core/connection.py` | Geändert |
 | `.gitignore` | Geändert |

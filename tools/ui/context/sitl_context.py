@@ -1576,7 +1576,7 @@ class SITLContext(QObject):
         closes reliably.  Close manually with Q or ESC inside the window.
         Requires: pip install opencv-python gz-transport13 gz-msgs10
         """
-        script = Path(__file__).parent.parent / "gz_viewers" / "lidar_viewer.py"
+        script = Path(__file__).parent.parent / "gz_bridge" / "lidar_viewer.py"
         topic = (topic or "/lidar/scan").strip()
         if not script.exists():
             self._log("ERROR", f"[SITL] lidar_viewer.py not found: {script}")
@@ -1604,7 +1604,7 @@ class SITLContext(QObject):
         closes reliably.  Close manually with Q or ESC inside the window.
         Requires: pip install opencv-python gz-transport13 gz-msgs10
         """
-        script = Path(__file__).parent.parent / "gz_viewers" / "flow_viewer.py"
+        script = Path(__file__).parent.parent / "gz_bridge" / "flow_viewer.py"
         topic = (topic or "/flow_camera/image").strip()
         if not script.exists():
             self._log("ERROR", f"[SITL] flow_viewer.py not found: {script}")
@@ -1674,7 +1674,7 @@ class SITLContext(QObject):
             self._log("WARN", "[SITL] Bridge läuft bereits — wird neu gestartet")
             self.stopSensorBridge()
 
-        script = Path(__file__).parent.parent / "gz_viewers" / "gazebo_mavlink_sensor_bridge.py"
+        script = Path(__file__).parent.parent / "gz_bridge" / "gazebo_mavlink_sensor_bridge.py"
         if not script.exists():
             self._log("ERROR", f"[SITL] gazebo_mavlink_sensor_bridge.py nicht gefunden: {script}")
             self._bridge_status = "error"

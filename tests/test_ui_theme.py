@@ -7,7 +7,7 @@ import pytest
 @pytest.mark.ui
 def test_theme_colors_defined():
     """Test that all theme colors are properly defined"""
-    from tools.ui.style import Colors
+    from tools.ui.legacy.style import Colors
     
     # Background colors
     assert Colors.bg_app == "#0a0e1a"
@@ -34,7 +34,7 @@ def test_theme_colors_defined():
 @pytest.mark.ui
 def test_state_colors_complete():
     """Test that all drone states have colors defined"""
-    from tools.ui.style import STATE_COLORS
+    from tools.ui.legacy.style import STATE_COLORS
     
     required_states = [
         "IDLE", "ARMING", "ARMED", "TAKEOFF", 
@@ -51,7 +51,7 @@ def test_state_colors_complete():
 @pytest.mark.ui
 def test_drone_colors_sufficient():
     """Test that we have enough drone colors for multi-drone display"""
-    from tools.ui.style import DRONE_COLORS
+    from tools.ui.legacy.style import DRONE_COLORS
     
     # Should have at least 10 distinct colors for swarms
     assert len(DRONE_COLORS) >= 10
@@ -68,7 +68,7 @@ def test_drone_colors_sufficient():
 @pytest.mark.ui
 def test_color_contrast_accessibility():
     """Test that text colors have sufficient contrast against backgrounds"""
-    from tools.ui.style import Colors
+    from tools.ui.legacy.style import Colors
     
     def hex_to_rgb(hex_color):
         """Convert hex color to RGB tuple"""
@@ -107,7 +107,7 @@ def test_color_contrast_accessibility():
 @pytest.mark.ui
 def test_stylesheet_generation():
     """Test that stylesheets are generated without errors"""
-    from tools.ui.style import DARK_THEME, TAB_STYLESHEET, STATUSBAR_STYLESHEET
+    from tools.ui.legacy.style import DARK_THEME, TAB_STYLESHEET, STATUSBAR_STYLESHEET
     
     # Should be non-empty strings
     assert isinstance(DARK_THEME, str)
@@ -128,7 +128,7 @@ def test_stylesheet_generation():
 @pytest.mark.ui
 def test_button_variants_styling():
     """Test that button variant styles are properly defined"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should have styles for all button variants
     assert "btn_primary" in DARK_THEME
@@ -145,7 +145,7 @@ def test_button_variants_styling():
 @pytest.mark.ui
 def test_gradient_definitions():
     """Test that gradient definitions are present for modern buttons"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should contain gradient definitions
     assert "qlineargradient" in DARK_THEME
@@ -156,7 +156,7 @@ def test_gradient_definitions():
 @pytest.mark.ui
 def test_border_radius_consistency():
     """Test that border radius values are consistent"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should use consistent border radius values
     # Common values: 6px, 8px, 10px, 12px
@@ -172,7 +172,7 @@ def test_border_radius_consistency():
 @pytest.mark.ui
 def test_font_families_defined():
     """Test that font families are properly defined"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should define sans-serif font stack
     assert "Segoe UI" in DARK_THEME
@@ -187,7 +187,7 @@ def test_font_families_defined():
 @pytest.mark.ui
 def test_accessibility_features():
     """Test that accessibility features are present"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should have focus indicators
     assert ":focus" in DARK_THEME
@@ -202,7 +202,7 @@ def test_accessibility_features():
 @pytest.mark.ui
 def test_color_immutability():
     """Test that Colors dataclass is immutable"""
-    from tools.ui.style import Colors
+    from tools.ui.legacy.style import Colors
     
     # Should not be able to modify colors
     with pytest.raises(AttributeError):
@@ -215,7 +215,7 @@ def test_color_immutability():
 @pytest.mark.ui
 def test_spacing_consistency():
     """Test that spacing values follow 8px grid system"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should use multiples of 4 or 8 for padding/margin
     # Common values: 4px, 8px, 10px, 12px, 16px, 20px, 24px
@@ -235,7 +235,7 @@ def test_spacing_consistency():
 @pytest.mark.ui
 def test_shadow_definitions():
     """Test that box shadows are defined for depth"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should have box-shadow definitions
     assert "box-shadow" in DARK_THEME or "shadow" in DARK_THEME.lower()
@@ -244,7 +244,7 @@ def test_shadow_definitions():
 @pytest.mark.ui
 def test_transition_smoothness():
     """Test that transitions are defined for smooth animations"""
-    from tools.ui.style import DARK_THEME
+    from tools.ui.legacy.style import DARK_THEME
     
     # Should have transition or animation definitions
     # Note: Qt stylesheets don't support CSS transitions,

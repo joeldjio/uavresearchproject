@@ -68,3 +68,6 @@ mav.tlog
 mav.tlog.raw
 *.tlog
 *.tlog.raw
+
+# Generated plots
+plots/

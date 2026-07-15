@@ -320,7 +320,7 @@ SkyMeshX includes a complete ArduPilot SITL workflow integrated into the GCS:
 - Parameter tab: known `SIM_*` parameters with live editing via MAVProxy one-shot.
 - **Gazebo tab**: LiDAR viewer, Optical Flow viewer, sensor stream monitor, GStreamer stream routing.
 - **Live overlays on the map**: in-process `gz.transport13` subscriptions push LiDAR (polar plot, 300×300) and Optical Flow (320×240) frames directly onto the map as PIP images — toggle per sensor, no extra windows.
-- **Gazebo → MAVLink sensor bridge** (`tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py`): sends `OPTICAL_FLOW_RAD`, `DISTANCE_SENSOR`, and `OBSTACLE_DISTANCE` to ArduPilot; headless, SIGTERM-safe, works for SITL and real hardware.
+- **Gazebo → MAVLink sensor bridge** (`tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py`): sends `OPTICAL_FLOW_RAD`, `DISTANCE_SENSOR`, and `OBSTACLE_DISTANCE` to ArduPilot; headless, SIGTERM-safe, works for SITL and real hardware.
 - One-click parameter apply (`FLOW_TYPE=5`, `RNGFND1_TYPE=10`, `RNGFND1_ORIENT=25`, `PRX1_TYPE=2`, `AVOID_ENABLE=7`, `AVOID_MARGIN=2`) from the Sensor Bridge section.
 - Bridge status LED (green/red, 1.5 s polling) and EKF Non-GPS hint block.
 

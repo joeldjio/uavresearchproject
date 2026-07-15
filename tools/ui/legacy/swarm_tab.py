@@ -13,8 +13,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
-from tools.ui.style import STATE_COLORS, DRONE_COLORS
-from tools.ui.widgets import StateBadge, MetricCard, section_header, h_separator, BatteryBar
+from tools.ui.legacy.style import STATE_COLORS, DRONE_COLORS
+from tools.ui.legacy.widgets import StateBadge, MetricCard, section_header, h_separator, BatteryBar
 
 
 class DroneRow(QFrame):
