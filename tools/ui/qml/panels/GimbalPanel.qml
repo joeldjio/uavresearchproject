@@ -202,7 +202,12 @@ Item {
                     Connections {
                         target: typeof videoStream !== "undefined" ? videoStream : null
                         function onFrameChanged(droneId, frameUrl) {
-                            if (droneId === root.selectedDroneId && videoDisplayBox._activeTarget === "gimbal")
+                            if (droneId !== root.selectedDroneId) return
+                            var s = videoStream.getVideoStatus(droneId)
+                            videoDisplayBox._vsStatus     = s ? (s.status      || "unconfigured") : "unconfigured"
+                            videoDisplayBox._activeTarget = s ? (s.activeTarget || "")            : ""
+                            videoDisplayBox._hasFrame     = !!(s && s.hasFrame)
+                            if (videoDisplayBox._activeTarget === "gimbal")
                                 gimbalVideoFrame.source = frameUrl
                         }
                     }
@@ -267,7 +272,8 @@ Item {
                                      videoDisplayBox._activeTarget === "gimbal" &&
                                      videoDisplayBox._hasFrame
                             Row {
-                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }; spacing: 10
+                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                                spacing: 10
                                 Text { text: typeof camera !== "undefined" ? camera.currentSource : "—"
                                     color: "#e2e8f0"; font.pixelSize: 9; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                                 Rectangle { width: 1; height: 14; color: "#334155"; anchors.verticalCenter: parent.verticalCenter }
@@ -465,7 +471,8 @@ Item {
 
                     // Stats overlay (bottom)
                     Column {
-                        anchors { bottom: parent.bottom; left: parent.left; margins: 8 }; spacing: 2
+                        anchors { bottom: parent.bottom; left: parent.left; margins: 8 }
+                        spacing: 2
                         Text { text: "vx=" + flowLayer._flowX.toFixed(3) + " m/s   vy=" + flowLayer._flowY.toFixed(3) + " m/s"
                             color: "#a78bfa"; font.pixelSize: 9; font.family: "Consolas" }
                         Text { text: "quality=" + flowLayer._quality + "   gnd=" + flowLayer._groundDist.toFixed(2) + " m"
@@ -1333,7 +1340,6 @@ Item {
                     }
                 }
             }
-        }
 
         // ══════════════════════════════════════════════════════════════════
         // SENSOR BRIDGE — Gazebo → ArduPilot MAVLink

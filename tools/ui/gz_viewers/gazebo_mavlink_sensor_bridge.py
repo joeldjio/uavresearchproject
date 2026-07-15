@@ -76,7 +76,10 @@ FLOW_MAX_RAD_S        = 4.0    # EKF-Grenze
 # LiDAR → OBSTACLE_DISTANCE: 72 gleichmäßige Sektoren à 5°
 LIDAR_BIN_COUNT       = 72
 LIDAR_INCREMENT_DEG   = 360.0 / LIDAR_BIN_COUNT
-LIDAR_ANGLE_OFFSET_DEG = -180.0    # Startwinkel des ersten Sektors (FRD)
+# angle_offset=0 bedeutet: Index 0 entspricht vorne (0° im BODY_FRD-Frame).
+# ArduPilot Proximity-Stack erwartet Index 0 = vorne.  -180° war falsch und
+# verschob alle Sektoren um 180° → Drohne wich vor Hindernissen hinter ihr aus.
+LIDAR_ANGLE_OFFSET_DEG = 0.0
 
 # Zeitabstand zwischen OBSTACLE_DISTANCE-Paketen (Netz entlasten)
 LIDAR_SEND_INTERVAL_S = 0.10   # ~10 Hz
@@ -285,12 +288,12 @@ def _lidar_callback(msg: "GzLaserScan") -> None:
             ang_rad, dist_m = float(ang_rad), float(dist_m)
             if not math.isfinite(dist_m) or dist_m < min_m or dist_m > max_m:
                 continue
-            # Gazebo: positiv = gegen Uhrzeigersinn → umrechnen in MAVLink FRD
+            # Gazebo: positiv = gegen Uhrzeigersinn (CCW), Strahl 0 bei angle_min.
+            # MAVLink BODY_FRD: Index 0 = vorne (0°), positiv = Uhrzeigersinn (CW).
+            # Umrechnung: cw_deg = -gazebo_deg, dann 0–360 normalisieren.
             cw_deg = -math.degrees(ang_rad)
-            while cw_deg < -180.0: cw_deg += 360.0
-            while cw_deg >= 180.0: cw_deg -= 360.0
-            idx = int(math.floor((cw_deg - LIDAR_ANGLE_OFFSET_DEG) / LIDAR_INCREMENT_DEG))
-            idx = max(0, min(LIDAR_BIN_COUNT - 1, idx))
+            cw_deg = cw_deg % 360.0          # 0 … 360, kein -180…+180 Wrap-Fehler
+            idx = int(math.floor(cw_deg / LIDAR_INCREMENT_DEG)) % LIDAR_BIN_COUNT
             d_cm = int(_clamp(round(dist_m * 100), min_cm, max_cm))
             bins[idx] = min(int(bins[idx]), d_cm)
 

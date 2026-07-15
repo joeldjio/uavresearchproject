@@ -260,7 +260,9 @@ Item {
         Timer { interval: 250; running: true; repeat: true
             onTriggered: {
                 if (typeof videoStream === "undefined" || !videoStream) { videoPipOverlay._videoStatus = {}; return }
-                var did = typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : ""
+                // Prefer the UI-selected drone; fall back to whichever drone has an active stream
+                var did = (typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : "")
+                          || videoStream.activeDroneId
                 videoPipOverlay._videoStatus = did ? videoStream.getVideoStatus(did) : {}
                 if (did && videoPipOverlay.visible)
                     mapVideoFrame.source = videoStream.frameUrl(did)
@@ -270,7 +272,8 @@ Item {
         Connections {
             target: typeof videoStream !== "undefined" ? videoStream : null
             function onFrameChanged(droneId, frameUrl) {
-                var did = typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : ""
+                var did = (typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : "")
+                          || videoStream.activeDroneId
                 if (droneId === did && videoPipOverlay._videoStatus.activeTarget === "map")
                     mapVideoFrame.source = frameUrl
             }
@@ -326,7 +329,8 @@ Item {
                 anchors.fill: parent
                 onClicked: {
                     if (typeof videoStream !== "undefined" && videoStream) {
-                        var did = (typeof Cmp !== "undefined" && Cmp.AppState) ? Cmp.AppState.selectedDroneId : ""
+                        var did = ((typeof Cmp !== "undefined" && Cmp.AppState) ? Cmp.AppState.selectedDroneId : "")
+                                  || videoStream.activeDroneId
                         if (did) videoStream.stopStream(did)
                     }
                 }

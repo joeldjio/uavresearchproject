@@ -1952,7 +1952,7 @@ class SITLContext(QObject):
             return
         cmds = "  ".join(f"param set {n} {v};" for n, v in params.items())
         cmd = [mavproxy, "--master=tcp:127.0.0.1:5760",
-               "--cmd", cmds + "  exit"]
+               "--cmd", cmds + "  reboot;  exit"]
         try:
             subprocess.Popen(
                 cmd,
@@ -2066,9 +2066,14 @@ class SITLContext(QObject):
     # Internal helpers
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _schedule_auto_connect(self, connections: List[dict], delay_ms: int = 5000) -> None:
+    def _schedule_auto_connect(self, connections: List[dict], delay_ms: int = 8000) -> None:
         """
         Fire autoConnectReady after `delay_ms` ms so SITL has time to boot.
+
+        Default is 8 s — ArduPilot SITL needs a few seconds to initialise its
+        TCP listeners before the GCS can open a connection.  After the delay
+        DroneBackend.connect() still has its own 10 s heartbeat timeout, so the
+        total window before a final failure is ~18 s.
 
         connections: list of {"id": str, "connection_string": str}
         The signal payload is passed through to service_locator.wire() which
@@ -2080,7 +2085,7 @@ class SITLContext(QObject):
         timer.timeout.connect(lambda: self.autoConnectReady.emit(connections))
         timer.start()
         self._log("INFO",
-            f"[SITL] Auto-connect in {delay_ms // 1000}s: "
+            f"[SITL] Auto-connect in {delay_ms / 1000:.0f}s: "
             + ", ".join(f"{c['id']}@{c['connection_string']}" for c in connections))
 
     def _open_terminal(self, script: str, title: str = "SITL") -> Optional[subprocess.Popen]:

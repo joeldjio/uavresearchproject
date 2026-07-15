@@ -1933,34 +1933,56 @@ Item {
                             }
 
                             // ── Schritt 3: enable_streaming aktivieren ────────
-                            ColumnLayout { Layout.fillWidth: true; spacing: 4
+                            ColumnLayout {
+                                Layout.fillWidth: true; spacing: 4
+
                                 Text { text: "③ Streaming aktivieren"; color: "#475569"; font.pixelSize: 10; font.weight: Font.Bold }
                                 Text {
-                                    text: "Topic-Pfad (World-Name und Modell anpassen):"
+                                    text: "Topic-Pfad — 'Auto-Detect' füllt den echten World-Namen ein:"
                                     color: "#64748b"; font.pixelSize: 10
                                 }
+
                                 Rectangle { Layout.fillWidth: true; height: 34; radius: 6; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
                                     TextInput {
                                         id: gzEnableStreamingField
                                         anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
                                         verticalAlignment: TextInput.AlignVCenter
                                         color: "#38bdf8"; font.pixelSize: 10; font.family: "Consolas"
-                                        text: "/world/iris_runway/model/iris_with_gimbal/model/gimbal/link/pitch_link/sensor/camera/image/enable_streaming"
+                                        // Default intentionally empty — user must click Auto-Detect first
+                                        text: ""
                                         wrapMode: TextInput.NoWrap
-                                        Text { text: "Topic-Pfad…"; color: "#374151"; font: parent.font; visible: parent.text.length === 0 }
+                                        Text { text: "Topic-Pfad… (Auto-Detect klicken)"; color: "#374151"; font: parent.font; visible: parent.text.length === 0 }
                                     }
                                 }
+
                                 Row { spacing: 8
+                                    // Auto-Detect button — calls detectStreamingTopics() and fills the field
                                     Rectangle {
-                                        width: 180; height: 30; radius: 6
-                                        color: enableStreamM.containsMouse ? "#15803d" : "#166534"; border.color: "#22c55e"; border.width: 1
-                                        Text { text: "Streaming aktivieren"; color: "#bbf7d0"; font.pixelSize: 10; font.weight: Font.Bold; anchors.centerIn: parent }
-                                        MouseArea { id: enableStreamM; anchors.fill: parent; hoverEnabled: true
-                                            enabled: gzEnableStreamingField.text.trim() !== ""
-                                            onClicked: { if (ok()) sitl.enableStreaming(gzEnableStreamingField.text.trim()) }
+                                        width: 110; height: 30; radius: 6
+                                        color: autoDetectM.containsMouse ? "#1e3a5f" : "#0d1623"; border.color: "#2563eb"; border.width: 1
+                                        Text { text: "⟳ Auto-Detect"; color: "#93c5fd"; font.pixelSize: 10; font.weight: Font.Bold; anchors.centerIn: parent }
+                                        MouseArea { id: autoDetectM; anchors.fill: parent; hoverEnabled: true
+                                            onClicked: {
+                                                if (!ok()) return
+                                                var topics = sitl.detectStreamingTopics()
+                                                if (topics && topics.length > 0)
+                                                    gzEnableStreamingField.text = topics[0]
+                                            }
                                         }
                                     }
-                                    // Copy to clipboard hint
+                                    Rectangle {
+                                        width: 160; height: 30; radius: 6
+                                        color: enableStreamM.containsMouse ? "#15803d" : "#166534"; border.color: "#22c55e"; border.width: 1
+                                        Text { text: "▶ Streaming aktivieren"; color: "#bbf7d0"; font.pixelSize: 10; font.weight: Font.Bold; anchors.centerIn: parent }
+                                        MouseArea { id: enableStreamM; anchors.fill: parent; hoverEnabled: true
+                                            enabled: gzEnableStreamingField.text.trim() !== ""
+                                            onClicked: {
+                                                if (!ok() || !gzEnableStreamingField.text.trim()) return
+                                                sitl.enableStreaming(gzEnableStreamingField.text.trim())
+                                            }
+                                        }
+                                    }
+                                    // Hint
                                     Text {
                                         text: "→ gz.msgs.Boolean data:1"
                                         color: "#475569"; font.pixelSize: 9; font.family: "Consolas"
@@ -1970,32 +1992,108 @@ Item {
                             }
 
                             GridLayout { Layout.fillWidth: true; columns: 2; columnSpacing: 10; rowSpacing: 6
-                                Text { text: "Stream-URL"; color: "#64748b"; font.pixelSize: 11 }
+                                Text { text: "UDP Port"; color: "#64748b"; font.pixelSize: 11 }
                                 Text { text: "Ziel"; color: "#64748b"; font.pixelSize: 11 }
 
+                                // Port declared FIRST so gzStreamUrlField can safely reference it
                                 Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                    TextInput { id: gzStreamUrlField; text: "udp://0.0.0.0:" + (gzStreamPortField.text || "5600"); anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#38bdf8"; font.pixelSize: 12; font.family: "Consolas" } }
+                                    TextInput {
+                                        id: gzStreamPortField
+                                        text: "5600"
+                                        anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter
+                                        color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas"
+                                        onTextChanged: gzStreamUrlField.text = "udp://0.0.0.0:" + text
+                                    }
+                                }
 
                                 Row { spacing: 12
                                     RadioButton { id: gzTargetMapRadio; text: "Map (PIP)"; contentItem: Text { text: parent.text; color: "#e2e8f0"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
                                     RadioButton { id: gzTargetGimbalRadio; text: "Gimbal"; checked: true; contentItem: Text { text: parent.text; color: "#e2e8f0"; font.pixelSize: 11; leftPadding: parent.indicator.width + 4; verticalAlignment: Text.AlignVCenter } }
                                 }
 
-                                Text { text: "UDP Port"; color: "#64748b"; font.pixelSize: 11 }
+                                Text { text: "Stream-URL"; color: "#64748b"; font.pixelSize: 11 }
                                 Item {}  // spacer
 
                                 Rectangle { Layout.fillWidth: true; height: 32; radius: 5; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
-                                    TextInput { id: gzStreamPortField; text: "5600"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas"
-                                        onTextChanged: gzStreamUrlField.text = "udp://0.0.0.0:" + text } }
+                                    TextInput {
+                                        id: gzStreamUrlField
+                                        // Now gzStreamPortField is declared above — safe to reference
+                                        text: "udp://0.0.0.0:" + gzStreamPortField.text
+                                        anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter
+                                        color: "#38bdf8"; font.pixelSize: 12; font.family: "Consolas"
+                                    }
+                                }
                                 Item {}  // spacer
                             }
 
-                            // Stream status
-                            property var _streamStatus: {
-                                if (!vsOk()) return {}
-                                var did = typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : ""
-                                did = did || "sitl_drone"
-                                return videoStream.getVideoStatus(did) || {}
+                            // Stream status — Timer-driven so it stays live
+                            property var _streamStatus: ({})
+                            Timer {
+                                interval: 500; running: root._tab === 4; repeat: true
+                                onTriggered: {
+                                    if (!vsOk()) { parent._streamStatus = {}; return }
+                                    var did = (typeof Cmp !== "undefined" && Cmp.AppState && Cmp.AppState.selectedDroneId)
+                                              ? Cmp.AppState.selectedDroneId : "sitl_drone"
+                                    parent._streamStatus = videoStream.getVideoStatus(did) || {}
+                                }
+                            }
+
+                            // Stream status badge — live feedback
+                            Rectangle {
+                                Layout.fillWidth: true; height: 32; radius: 6
+                                color: {
+                                    var s = parent._streamStatus.status || ""
+                                    if (s === "receiving") return "#0d2117"
+                                    if (s === "waiting")   return "#1c1400"
+                                    if (s === "stalled")   return "#1c0a00"
+                                    if (s === "error")     return "#1a0a0a"
+                                    return "#111827"
+                                }
+                                border.color: {
+                                    var s = parent._streamStatus.status || ""
+                                    if (s === "receiving") return "#22c55e"
+                                    if (s === "waiting")   return "#f59e0b"
+                                    if (s === "stalled")   return "#f97316"
+                                    if (s === "error")     return "#ef4444"
+                                    return "#1e2535"
+                                }
+                                border.width: 1
+
+                                Row {
+                                    anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 12 }
+                                    spacing: 8
+                                    Rectangle {
+                                        width: 8; height: 8; radius: 4; anchors.verticalCenter: parent.verticalCenter
+                                        color: {
+                                            var s = parent.parent.parent._streamStatus.status || ""
+                                            if (s === "receiving") return "#22c55e"
+                                            if (s === "waiting")   return "#f59e0b"
+                                            if (s === "stalled")   return "#f97316"
+                                            if (s === "error")     return "#ef4444"
+                                            return "#334155"
+                                        }
+                                    }
+                                    Text {
+                                        text: {
+                                            var st = parent.parent.parent._streamStatus
+                                            var s  = st.status || "unconfigured"
+                                            if (s === "receiving") return "● LIVE — " + (st.fps || 0).toFixed(1) + " fps  |  target: " + (st.activeTarget || "?")
+                                            if (s === "waiting")   return "⏳ Warte auf Stream… (GStreamer/GCS läuft?)"
+                                            if (s === "stalled")   return "⚠ Stream gestoppt (kein Data)"
+                                            if (s === "error")     return "✕ Fehler: " + (st.lastError || "?")
+                                            return "Kein Stream aktiv — '▶ Stream in GCS anzeigen' klicken"
+                                        }
+                                        color: {
+                                            var s = parent.parent.parent._streamStatus.status || ""
+                                            if (s === "receiving") return "#86efac"
+                                            if (s === "waiting")   return "#fde68a"
+                                            if (s === "stalled")   return "#fdba74"
+                                            if (s === "error")     return "#fca5a5"
+                                            return "#64748b"
+                                        }
+                                        font.pixelSize: 10; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter
+                                    }
+                                }
                             }
 
                             // ── Schritt 4: GStreamer Befehl-Preview ───────────
