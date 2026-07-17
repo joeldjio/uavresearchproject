@@ -62,10 +62,9 @@ ROS2 support is optional and must be installed through your ROS2 distribution, f
 python -m tools.ui
 ```
 
-Useful variants:
+For startup timing analysis:
 
 ```bash
-python -m tools.ui --debug
 python tools/ui/startup_profiler.py
 ```
 
