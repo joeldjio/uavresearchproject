@@ -318,11 +318,6 @@ Rectangle {
                         width: 6; height: 6; radius: 3
                         anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
                         color: ok ? "#22c55e" : "#78716c"
-                        SequentialAnimation on opacity {
-                            running: ok; loops: Animation.Infinite
-                            NumberAnimation { to: 0.3; duration: 800 }
-                            NumberAnimation { to: 1.0; duration: 800 }
-                        }
                     }
 
                     Text {

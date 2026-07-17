@@ -1696,7 +1696,13 @@ Rectangle {
                                 anchors.fill: parent
                                 hoverEnabled: true
                                 enabled: mission && (mission.coverageWaypointCount > 0 || mission.seedingWaypointCount > 0 || mission.solarWaypointCount > 0)
-                                onClicked: if (mission) mission.uploadMission()
+                                onClicked: {
+                                    if (!mission) return
+                                    // Pass swarm-selected drones (from SwarmPanel checkboxes) to the mission context.
+                                    var ids = Object.keys(Cmp.AppState.missionTargetIds)
+                                    mission.setTargetDroneIds(JSON.stringify(ids))
+                                    mission.uploadMission()
+                                }
                             }
                         }
 

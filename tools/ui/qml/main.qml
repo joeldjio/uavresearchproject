@@ -1006,15 +1006,7 @@ Window {
                     }
                 }
 
-                // ── Swarm → map visualization bridge ────────────────────────
-                Connections {
-                    target: swarm
-                    function onFormationUpdated(leaderId, positions) {
-                        if (mapLoader.item) {
-                            mapLoader.item.updateFormation(leaderId, positions)
-                        }
-                    }
-                }
+                // Formation lines are intentionally not drawn on the map.
 
                 // ── TABS 1..N: Panel Loaders ──────────────────────────────
                 // Each tab gets its own Loader. Inactive tabs are unloaded
