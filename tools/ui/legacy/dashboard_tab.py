@@ -12,8 +12,8 @@ from PySide6.QtCore import Qt
 
 import pyqtgraph as pg
 
-from tools.ui.style import Colors, STATE_COLORS
-from tools.ui.widgets import (
+from tools.ui.legacy.style import Colors, STATE_COLORS
+from tools.ui.legacy.widgets import (
     MetricCard, StateBadge, AttitudeIndicator,
     CompassWidget, BatteryBar, section_header, h_separator
 )

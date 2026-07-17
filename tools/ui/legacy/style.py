@@ -3,7 +3,7 @@ Dark modern Qt6 stylesheet for the skymeshx gcs.
 
 Usage
 -----
-from tools.ui.style import Colors, DARK_THEME, TAB_STYLESHEET, STATE_COLORS, DRONE_COLORS
+from tools.ui.legacy.style import Colors, DARK_THEME, TAB_STYLESHEET, STATE_COLORS, DRONE_COLORS
 """
 
 from dataclasses import dataclass

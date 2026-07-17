@@ -27,13 +27,13 @@ from PySide6.QtWidgets import (
 
 from tools.ui._version import VERSION
 from tools.ui.backend import SwarmBackend
-from tools.ui.dashboard_tab import DashboardTab
-from tools.ui.experiment_tab import ExperimentTab
-from tools.ui.log_tab import LogTab
-from tools.ui.map_tab import MapTab
-from tools.ui.safety_tab import SafetyTab
-from tools.ui.style import DARK_THEME, STATUSBAR_STYLESHEET, TAB_STYLESHEET, Colors
-from tools.ui.swarm_tab import SwarmTab
+from tools.ui.legacy.dashboard_tab import DashboardTab
+from tools.ui.legacy.experiment_tab import ExperimentTab
+from tools.ui.legacy.log_tab import LogTab
+from tools.ui.legacy.map_tab import MapTab
+from tools.ui.legacy.safety_tab import SafetyTab
+from tools.ui.legacy.style import DARK_THEME, STATUSBAR_STYLESHEET, TAB_STYLESHEET, Colors
+from tools.ui.legacy.swarm_tab import SwarmTab
 
 _APP_TITLE = "skymeshx gcs"
 _APP_VERSION = f"v{VERSION}"

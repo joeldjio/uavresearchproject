@@ -84,7 +84,7 @@ test-coverage:
 	@echo "Running tests with coverage..."
 	pytest tests/ \
 		-m "not slow and not sitl and not e2e" \
-		--cov=droneresearch \
+		--cov=skymeshx \
 		--cov=tools.ui \
 		--cov-report=html \
 		--cov-report=term \
@@ -96,7 +96,7 @@ test-coverage:
 test-coverage-all:
 	@echo "Running ALL tests with coverage..."
 	pytest tests/ \
-		--cov=droneresearch \
+		--cov=skymeshx \
 		--cov=tools.ui \
 		--cov-report=html \
 		--cov-report=term \
@@ -108,23 +108,23 @@ test-coverage-all:
 # ============================================================================
 lint:
 	@echo "Running ruff..."
-	ruff check droneresearch/ tools/ tests/ || true
+	ruff check skymeshx/ tools/ tests/ || true
 	@echo ""
 	@echo "Running mypy..."
-	mypy droneresearch/ --ignore-missing-imports || true
+	mypy skymeshx/ --ignore-missing-imports || true
 	@echo ""
 	@echo "Running black (check only)..."
-	black --check droneresearch/ tools/ tests/ || true
+	black --check skymeshx/ tools/ tests/ || true
 	@echo ""
 	@echo "Running isort (check only)..."
-	isort --check-only droneresearch/ tools/ tests/ || true
+	isort --check-only skymeshx/ tools/ tests/ || true
 
 format:
 	@echo "Formatting code with black..."
-	black droneresearch/ tools/ tests/
+	black skymeshx/ tools/ tests/
 	@echo ""
 	@echo "Sorting imports with isort..."
-	isort droneresearch/ tools/ tests/
+	isort skymeshx/ tools/ tests/
 
 # ============================================================================
 # CI/CD
@@ -132,7 +132,7 @@ format:
 ci-test:
 	pytest tests/ \
 		-m "not slow and not sitl and not e2e" \
-		--cov=droneresearch \
+		--cov=skymeshx \
 		--cov=tools.ui \
 		--cov-report=xml \
 		--cov-report=term \
@@ -140,10 +140,10 @@ ci-test:
 		-v
 
 ci-lint:
-	ruff check droneresearch/ tools/ tests/
-	black --check droneresearch/ tools/ tests/
-	isort --check-only droneresearch/ tools/ tests/
-	mypy droneresearch/ --ignore-missing-imports
+	ruff check skymeshx/ tools/ tests/
+	black --check skymeshx/ tools/ tests/
+	isort --check-only skymeshx/ tools/ tests/
+	mypy skymeshx/ --ignore-missing-imports
 
 ci-build:
 	python -m build

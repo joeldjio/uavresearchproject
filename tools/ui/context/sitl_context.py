@@ -45,6 +45,10 @@ Slots (QML):
   launchGstPreview(host, port) open terminal: gst-launch-1.0 …
   launchLidarViewer(topic)     open detached OpenCV LiDAR polar-plot window
   launchFlowViewer(topic)      open detached OpenCV flow-camera window
+  launchSensorBridge(json)     start gz→MAVLink bridge as direct subprocess
+  stopSensorBridge()           SIGTERM the running bridge process
+  getBridgeStatus() → str      "stopped"|"running"|"error"
+  applyBridgeParams(master)    send ArduPilot params via mavproxy one-shot
   launchMavproxy(json)         open terminal: mavproxy.py
   launchMavproxyWithJoystick() open terminal with joystick module
   launchMavproxyGraph(field)   open terminal with graph module
@@ -478,6 +482,9 @@ class SITLContext(QObject):
         self._gz_lock           = threading.Lock()
         # Track last emitted b64 to skip unchanged frames (reduces flicker)
         self._gz_lidar_last:    str = ""
+        # Sensor bridge subprocess
+        self._bridge_proc: Optional[subprocess.Popen] = None
+        self._bridge_status: str = "stopped"   # "stopped"|"running"|"error"
         self._gz_flow_last:     str = ""
 
         # Load persisted config
@@ -1569,7 +1576,7 @@ class SITLContext(QObject):
         closes reliably.  Close manually with Q or ESC inside the window.
         Requires: pip install opencv-python gz-transport13 gz-msgs10
         """
-        script = Path(__file__).parent.parent / "gz_viewers" / "lidar_viewer.py"
+        script = Path(__file__).parent.parent / "gz_bridge" / "lidar_viewer.py"
         topic = (topic or "/lidar/scan").strip()
         if not script.exists():
             self._log("ERROR", f"[SITL] lidar_viewer.py not found: {script}")
@@ -1597,7 +1604,7 @@ class SITLContext(QObject):
         closes reliably.  Close manually with Q or ESC inside the window.
         Requires: pip install opencv-python gz-transport13 gz-msgs10
         """
-        script = Path(__file__).parent.parent / "gz_viewers" / "flow_viewer.py"
+        script = Path(__file__).parent.parent / "gz_bridge" / "flow_viewer.py"
         topic = (topic or "/flow_camera/image").strip()
         if not script.exists():
             self._log("ERROR", f"[SITL] flow_viewer.py not found: {script}")
@@ -1615,6 +1622,141 @@ class SITLContext(QObject):
             self._log("INFO", f"[SITL] Flow viewer launched (PID {proc.pid}, topic={topic})")
         except Exception as exc:
             self._log("ERROR", f"[SITL] launchFlowViewer failed: {exc}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Gazebo → MAVLink Sensor Bridge
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ArduPilot-Parameter die die Bridge benötigt.
+    # Automatisch per applyBridgeParams() gesetzt, identisch für SITL + Hardware.
+    _BRIDGE_PARAMS: Dict[str, str] = {
+        "FLOW_TYPE":       "5",    # MAVLink Optical Flow (OPTICAL_FLOW_RAD)
+        "RNGFND1_TYPE":   "10",    # MAVLink Rangefinder (DISTANCE_SENSOR)
+        "RNGFND1_MIN_CM":  "5",
+        "RNGFND1_MAX_CM": "3000",
+        "RNGFND1_ORIENT": "25",    # nach unten (PITCH_270)
+        "PRX1_TYPE":       "2",    # MAVLink Proximity (OBSTACLE_DISTANCE)
+        "AVOID_ENABLE":    "7",    # Hinderniserkennung aktivieren
+        "AVOID_MARGIN":    "2",    # Sicherheitsabstand in Metern
+    }
+
+    @Slot(result=str)
+    def getBridgeStatus(self) -> str:
+        """Aktueller Status der Sensor-Bridge: 'stopped'|'running'|'error'."""
+        # Prozess noch am Leben?
+        if self._bridge_proc is not None:
+            if self._bridge_proc.poll() is None:
+                self._bridge_status = "running"
+            else:
+                rc = self._bridge_proc.returncode
+                self._bridge_status = "error" if rc != 0 else "stopped"
+                self._bridge_proc = None
+        return self._bridge_status
+
+    @Slot(result="QVariantList")
+    def getBridgeParamList(self) -> List[dict]:
+        """Liste der Bridge-Parameter für die UI-Anzeige."""
+        return [{"name": k, "value": v} for k, v in self._BRIDGE_PARAMS.items()]
+
+    @Slot(str)
+    def launchSensorBridge(self, config_json: str = "{}") -> None:
+        """Starte die Gazebo→MAVLink Sensor-Bridge als direkten Subprozess.
+
+        config_json (optional): {"mavlink": "udpin:0.0.0.0:14550",
+                                 "camera_topic": "/flow_camera/image",
+                                 "lidar_topic":  "/lidar/scan"}
+
+        Die Bridge läuft headless (--no-display) und kann per stopSensorBridge()
+        oder stopAll() beendet werden.
+        """
+        # Bereits laufende Bridge stoppen
+        if self._bridge_proc is not None and self._bridge_proc.poll() is None:
+            self._log("WARN", "[SITL] Bridge läuft bereits — wird neu gestartet")
+            self.stopSensorBridge()
+
+        script = Path(__file__).parent.parent / "gz_bridge" / "gazebo_mavlink_sensor_bridge.py"
+        if not script.exists():
+            self._log("ERROR", f"[SITL] gazebo_mavlink_sensor_bridge.py nicht gefunden: {script}")
+            self._bridge_status = "error"
+            return
+
+        try:
+            cfg = json.loads(config_json) if config_json.strip() else {}
+        except Exception:
+            cfg = {}
+
+        mavlink      = cfg.get("mavlink",       "udpin:0.0.0.0:14550").strip()
+        camera_topic = cfg.get("camera_topic",  "/flow_camera/image").strip()
+        lidar_topic  = cfg.get("lidar_topic",   "/lidar/scan").strip()
+
+        cmd = [
+            "python3", str(script),
+            "--mavlink",       mavlink,
+            "--camera-topic",  camera_topic,
+            "--lidar-topic",   lidar_topic,
+            "--no-display",
+        ]
+
+        try:
+            env  = _gz_build_env()
+            proc = subprocess.Popen(cmd, env=env, start_new_session=True)
+            self._bridge_proc   = proc
+            self._bridge_status = "running"
+            with self._lock:
+                self._viewer_procs.append(_TrackedProc("sensor_bridge", proc))
+            self._trace("bridge_launch", {
+                "pid": proc.pid, "mavlink": mavlink,
+                "camera": camera_topic, "lidar": lidar_topic,
+            })
+            self._log("INFO",
+                f"[SITL] Sensor-Bridge gestartet (PID {proc.pid}, MAVLink={mavlink})")
+        except Exception as exc:
+            self._bridge_status = "error"
+            self._log("ERROR", f"[SITL] launchSensorBridge fehlgeschlagen: {exc}")
+
+    @Slot()
+    def stopSensorBridge(self) -> None:
+        """Beende die laufende Sensor-Bridge (SIGTERM → SIGKILL nach 2 s)."""
+        proc = self._bridge_proc
+        if proc is None:
+            return
+        try:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+        except Exception:
+            pass
+        self._bridge_proc   = None
+        self._bridge_status = "stopped"
+        # Aus _viewer_procs entfernen
+        with self._lock:
+            self._viewer_procs = [
+                tp for tp in self._viewer_procs if tp.label != "sensor_bridge"
+            ]
+        self._log("INFO", "[SITL] Sensor-Bridge gestoppt.")
+
+    @Slot(str)
+    def applyBridgeParams(self, master: str = "tcp:127.0.0.1:5760") -> None:
+        """Sende alle benötigten ArduPilot-Parameter für die Bridge per MAVProxy.
+
+        Entspricht:
+            param set FLOW_TYPE 5
+            param set RNGFND1_TYPE 10  …
+            reboot
+
+        Funktioniert für SITL und echte Hardware — nur master-Adresse anpassen.
+        """
+        master = (master or "tcp:127.0.0.1:5760").strip()
+        params = dict(self._BRIDGE_PARAMS)
+
+        # Über _apply_params_now (no-terminal, detached mavproxy one-shot)
+        self._apply_params_now(params)
+        self._trace("bridge_params_applied", {"master": master, "params": params})
+        self._log("INFO",
+            f"[SITL] Bridge-Parameter gesendet an {master}: "
+            + ", ".join(f"{k}={v}" for k, v in params.items()))
 
     @Slot(str, int)
     def launchGstPreview(self, host: str, port: int) -> None:
@@ -1810,7 +1952,7 @@ class SITLContext(QObject):
             return
         cmds = "  ".join(f"param set {n} {v};" for n, v in params.items())
         cmd = [mavproxy, "--master=tcp:127.0.0.1:5760",
-               "--cmd", cmds + "  exit"]
+               "--cmd", cmds + "  reboot;  exit"]
         try:
             subprocess.Popen(
                 cmd,
@@ -1924,9 +2066,14 @@ class SITLContext(QObject):
     # Internal helpers
     # ─────────────────────────────────────────────────────────────────────────
 
-    def _schedule_auto_connect(self, connections: List[dict], delay_ms: int = 5000) -> None:
+    def _schedule_auto_connect(self, connections: List[dict], delay_ms: int = 8000) -> None:
         """
         Fire autoConnectReady after `delay_ms` ms so SITL has time to boot.
+
+        Default is 8 s — ArduPilot SITL needs a few seconds to initialise its
+        TCP listeners before the GCS can open a connection.  After the delay
+        DroneBackend.connect() still has its own 10 s heartbeat timeout, so the
+        total window before a final failure is ~18 s.
 
         connections: list of {"id": str, "connection_string": str}
         The signal payload is passed through to service_locator.wire() which
@@ -1938,7 +2085,7 @@ class SITLContext(QObject):
         timer.timeout.connect(lambda: self.autoConnectReady.emit(connections))
         timer.start()
         self._log("INFO",
-            f"[SITL] Auto-connect in {delay_ms // 1000}s: "
+            f"[SITL] Auto-connect in {delay_ms / 1000:.0f}s: "
             + ", ".join(f"{c['id']}@{c['connection_string']}" for c in connections))
 
     def _open_terminal(self, script: str, title: str = "SITL") -> Optional[subprocess.Popen]:

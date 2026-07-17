@@ -202,7 +202,12 @@ Item {
                     Connections {
                         target: typeof videoStream !== "undefined" ? videoStream : null
                         function onFrameChanged(droneId, frameUrl) {
-                            if (droneId === root.selectedDroneId && videoDisplayBox._activeTarget === "gimbal")
+                            if (droneId !== root.selectedDroneId) return
+                            var s = videoStream.getVideoStatus(droneId)
+                            videoDisplayBox._vsStatus     = s ? (s.status      || "unconfigured") : "unconfigured"
+                            videoDisplayBox._activeTarget = s ? (s.activeTarget || "")            : ""
+                            videoDisplayBox._hasFrame     = !!(s && s.hasFrame)
+                            if (videoDisplayBox._activeTarget === "gimbal")
                                 gimbalVideoFrame.source = frameUrl
                         }
                     }
@@ -267,7 +272,8 @@ Item {
                                      videoDisplayBox._activeTarget === "gimbal" &&
                                      videoDisplayBox._hasFrame
                             Row {
-                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }; spacing: 10
+                                anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                                spacing: 10
                                 Text { text: typeof camera !== "undefined" ? camera.currentSource : "—"
                                     color: "#e2e8f0"; font.pixelSize: 9; font.family: "Consolas"; anchors.verticalCenter: parent.verticalCenter }
                                 Rectangle { width: 1; height: 14; color: "#334155"; anchors.verticalCenter: parent.verticalCenter }
@@ -465,7 +471,8 @@ Item {
 
                     // Stats overlay (bottom)
                     Column {
-                        anchors { bottom: parent.bottom; left: parent.left; margins: 8 }; spacing: 2
+                        anchors { bottom: parent.bottom; left: parent.left; margins: 8 }
+                        spacing: 2
                         Text { text: "vx=" + flowLayer._flowX.toFixed(3) + " m/s   vy=" + flowLayer._flowY.toFixed(3) + " m/s"
                             color: "#a78bfa"; font.pixelSize: 9; font.family: "Consolas" }
                         Text { text: "quality=" + flowLayer._quality + "   gnd=" + flowLayer._groundDist.toFixed(2) + " m"
@@ -1298,17 +1305,17 @@ Item {
 
                     Row {
                         width: parent.width; spacing: 8
-                        Text { text: qsTr("Source:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
+                        Text { text: qsTr("Quelle:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
                         Text { id: sourceText; text: "—"; color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas" }
                     }
                     Row {
                         width: parent.width; spacing: 8
-                        Text { text: qsTr("Profile:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
+                        Text { text: qsTr("Profil:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
                         Text { id: profileText; text: "—"; color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas" }
                     }
                     Row {
                         width: parent.width; spacing: 8
-                        Text { text: qsTr("Resolution:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
+                        Text { text: qsTr("Auflösung:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
                         Text { id: resText; text: "—"; color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas" }
                     }
                     Row {
@@ -1318,21 +1325,327 @@ Item {
                     }
                     Row {
                         width: parent.width; spacing: 8
-                        Text { text: qsTr("Frame Age:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
+                        Text { text: qsTr("Frame-Alter:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
                         Text { id: frameAgeText; text: "—"; color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas" }
                     }
                     Row {
                         width: parent.width; spacing: 8
-                        Text { text: qsTr("Dropped Frames:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
+                        Text { text: qsTr("Verlorene Frames:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
                         Text { id: droppedText; text: "—"; color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas" }
                     }
                     Row {
                         width: parent.width; spacing: 8
                         Text { text: qsTr("Status:"); color: "#64748b"; font.pixelSize: 10; width: 100 }
-                        Text { id: gimbalErrorText; text: qsTr("No errors"); color: "#10b981"; font.pixelSize: 10; font.family: "Consolas" }
+                        Text { id: gimbalErrorText; text: qsTr("Kein Fehler"); color: "#10b981"; font.pixelSize: 10; font.family: "Consolas" }
                     }
                 }
             }
+
+        // ══════════════════════════════════════════════════════════════════
+        // SENSOR BRIDGE — Gazebo → ArduPilot MAVLink
+        // Optical Flow + LiDAR direkt an den Autopiloten senden
+        // ══════════════════════════════════════════════════════════════════
+
+        Rectangle { width: parent.width; height: 1; color: "#2d3748" }
+
+        Text {
+            text: qsTr("SENSOR BRIDGE — GAZEBO → ARDUPILOT")
+            color: "#64748b"; font.pixelSize: 9; font.weight: Font.Bold
+            font.letterSpacing: 1
         }
-    }
+
+        // Info-Box
+        Rectangle {
+            width: parent.width
+            height: bridgeInfoCol.implicitHeight + 16
+            radius: 6; color: "#07101a"
+            border.color: "#1e3a5f"; border.width: 1
+
+            Column {
+                id: bridgeInfoCol
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                spacing: 4
+
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "Sendet berechneten Optical Flow (OPTICAL_FLOW_RAD), "
+                        + "Bodenabstand (DISTANCE_SENSOR) und LiDAR-Hindernisdaten "
+                        + "(OBSTACLE_DISTANCE) direkt an ArduPilot per MAVLink.\n"
+                        + "Funktioniert für SITL und echte Hardware."
+                    color: "#64748b"; font.pixelSize: 10; lineHeight: 1.5
+                }
+                Text {
+                    width: parent.width
+                    text: "ⓘ  Vor dem Start: Parameter setzen → Reboot → Bridge starten"
+                    color: "#38bdf8"; font.pixelSize: 10
+                }
+            }
+        }
+
+        // ── Verbindungs-Konfiguration ──────────────────────────────────
+        Text { text: qsTr("VERBINDUNG"); color: "#475569"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+
+        Rectangle {
+            width: parent.width; height: bridgeCfgGrid.implicitHeight + 20
+            radius: 6; color: "#0d1117"; border.color: "#2d3748"; border.width: 1
+
+            Grid {
+                id: bridgeCfgGrid
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 12 }
+                columns: 2; columnSpacing: 10; rowSpacing: 8
+
+                Text { text: "MAVLink"; color: "#64748b"; font.pixelSize: 11 }
+                Text { text: "Kamera-Topic"; color: "#64748b"; font.pixelSize: 11 }
+
+                Rectangle {
+                    width: (bridgeCfgGrid.width - 10) / 2; height: 30; radius: 5
+                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                    TextInput {
+                        id: bridgeMavlinkField
+                        anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                        text: "udpin:0.0.0.0:14550"
+                        verticalAlignment: TextInput.AlignVCenter
+                        color: "#38bdf8"; font.pixelSize: 11; font.family: "Consolas"
+                    }
+                }
+                Rectangle {
+                    width: (bridgeCfgGrid.width - 10) / 2; height: 30; radius: 5
+                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                    TextInput {
+                        id: bridgeCameraField
+                        anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                        text: "/flow_camera/image"
+                        verticalAlignment: TextInput.AlignVCenter
+                        color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas"
+                    }
+                }
+
+                Text { text: "LiDAR-Topic"; color: "#64748b"; font.pixelSize: 11 }
+                Item {}   // Spacer
+
+                Rectangle {
+                    width: (bridgeCfgGrid.width - 10) / 2; height: 30; radius: 5
+                    color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                    TextInput {
+                        id: bridgeLidarField
+                        anchors { fill: parent; leftMargin: 8; rightMargin: 8 }
+                        text: "/lidar/scan"
+                        verticalAlignment: TextInput.AlignVCenter
+                        color: "#e2e8f0"; font.pixelSize: 11; font.family: "Consolas"
+                    }
+                }
+                Item {}   // Spacer
+            }
+        }
+
+        // ── Parameter-Liste ────────────────────────────────────────────
+        Text { text: qsTr("ARDUPILOT PARAMETER"); color: "#475569"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+
+        Rectangle {
+            width: parent.width; height: bridgeParamCol.implicitHeight + 16
+            radius: 6; color: "#0d1117"; border.color: "#2d3748"; border.width: 1
+
+            Column {
+                id: bridgeParamCol
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                spacing: 3
+
+                Repeater {
+                    model: (typeof sitl !== "undefined" && sitl) ? sitl.getBridgeParamList() : []
+                    delegate: Row {
+                        spacing: 8; width: parent.width
+                        Text {
+                            text: modelData.name
+                            color: "#60a5fa"; font.pixelSize: 10; font.family: "Consolas"
+                            width: 140
+                        }
+                        Text {
+                            text: "= " + modelData.value
+                            color: "#e2e8f0"; font.pixelSize: 10; font.family: "Consolas"
+                        }
+                    }
+                }
+
+                Rectangle { width: parent.width; height: 1; color: "#1e2535" }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "ⓘ  EK3_SRC1_VELXY=5 + EK3_SRC1_POSXY=0 nur setzen wenn\n"
+                        + "    Flow-Richtung geprüft und GPS deaktiviert werden soll."
+                    color: "#475569"; font.pixelSize: 9; font.family: "Consolas"
+                }
+            }
+        }
+
+        // ── Master-Feld für Parameter-Apply ───────────────────────────
+        Text { text: qsTr("PARAMETER SENDEN"); color: "#475569"; font.pixelSize: 9; font.weight: Font.Bold; font.letterSpacing: 0.8 }
+
+        Rectangle {
+            width: parent.width; height: 32; radius: 5
+            color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+            Row {
+                anchors { fill: parent; leftMargin: 8 }
+                spacing: 6
+                Text { text: "Master:"; color: "#64748b"; font.pixelSize: 10; anchors.verticalCenter: parent.verticalCenter }
+                TextInput {
+                    id: bridgeParamMasterField
+                    width: parent.width - 80
+                    text: "tcp:127.0.0.1:5760"
+                    verticalAlignment: TextInput.AlignVCenter
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: "#38bdf8"; font.pixelSize: 11; font.family: "Consolas"
+                }
+            }
+        }
+
+        // ── Status-Anzeige ─────────────────────────────────────────────
+        // Aktualisiert per Timer — getrennt von den Buttons um Flackern zu vermeiden.
+        property string _bridgeStatus: "stopped"
+        Timer {
+            interval: 1500; running: true; repeat: true
+            onTriggered: {
+                if (typeof sitl !== "undefined" && sitl)
+                    parent._bridgeStatus = sitl.getBridgeStatus()
+            }
+        }
+
+        Rectangle {
+            width: parent.width; height: 30; radius: 5
+            color: parent._bridgeStatus === "running" ? "#052e16"
+                 : parent._bridgeStatus === "error"   ? "#1c0505"
+                 : "#0a0f1a"
+            border.color: parent._bridgeStatus === "running" ? "#22c55e"
+                        : parent._bridgeStatus === "error"   ? "#ef4444"
+                        : "#2d3748"
+            border.width: 1
+
+            Row {
+                anchors.centerIn: parent; spacing: 8
+                Rectangle {
+                    width: 8; height: 8; radius: 4
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: parent.parent.parent._bridgeStatus === "running" ? "#22c55e"
+                         : parent.parent.parent._bridgeStatus === "error"   ? "#ef4444"
+                         : "#475569"
+                }
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    text: {
+                        var s = parent.parent.parent._bridgeStatus
+                        if (s === "running") return "Bridge aktiv — sendet OPTICAL_FLOW_RAD + OBSTACLE_DISTANCE"
+                        if (s === "error")   return "Bridge fehlgeschlagen — Log prüfen"
+                        return "Bridge gestoppt"
+                    }
+                    color: parent.parent.parent._bridgeStatus === "running" ? "#86efac"
+                         : parent.parent.parent._bridgeStatus === "error"   ? "#fca5a5"
+                         : "#475569"
+                    font.pixelSize: 10
+                }
+            }
+        }
+
+        // ── Aktion-Buttons ─────────────────────────────────────────────
+        Row {
+            spacing: 8; width: parent.width
+
+            // Parameter setzen + reboot
+            Rectangle {
+                width: 150; height: 36; radius: 7
+                property bool _ok: typeof sitl !== "undefined" && sitl
+                color: bridgeParamM.containsMouse ? "#1e3a5f" : "#0a1020"
+                border.color: _ok ? "#2563eb" : "#1f2937"; border.width: 1
+                Column {
+                    anchors.centerIn: parent; spacing: 1
+                    Text { text: "⚙ Parameter setzen"; color: parent.parent._ok ? "#93c5fd" : "#374151"
+                           font.pixelSize: 10; font.weight: Font.Bold; anchors.horizontalCenter: parent.horizontalCenter }
+                    Text { text: "→ reboot"; color: "#475569"; font.pixelSize: 9; anchors.horizontalCenter: parent.horizontalCenter }
+                }
+                MouseArea {
+                    id: bridgeParamM; anchors.fill: parent; hoverEnabled: true; enabled: parent._ok
+                    onClicked: sitl.applyBridgeParams(bridgeParamMasterField.text.trim() || "tcp:127.0.0.1:5760")
+                }
+            }
+
+            // Bridge starten
+            Rectangle {
+                width: 120; height: 36; radius: 7
+                property bool _ok: typeof sitl !== "undefined" && sitl
+                property bool _running: parent.parent._bridgeStatus === "running"
+                color: _running ? "#052e16" : (bridgeStartM.containsMouse ? "#15803d" : "#0a1a0a")
+                border.color: _ok ? "#22c55e" : "#1f2937"; border.width: 1
+                Text {
+                    anchors.centerIn: parent
+                    text: parent._running ? "◉ Bridge aktiv" : "▶ Bridge starten"
+                    color: parent._ok ? "#86efac" : "#374151"
+                    font.pixelSize: 10; font.weight: Font.Bold
+                }
+                MouseArea {
+                    id: bridgeStartM; anchors.fill: parent; hoverEnabled: true
+                    enabled: parent._ok && !parent._running
+                    onClicked: {
+                        var cfg = JSON.stringify({
+                            mavlink:       bridgeMavlinkField.text.trim()  || "udpin:0.0.0.0:14550",
+                            camera_topic:  bridgeCameraField.text.trim()   || "/flow_camera/image",
+                            lidar_topic:   bridgeLidarField.text.trim()    || "/lidar/scan"
+                        })
+                        sitl.launchSensorBridge(cfg)
+                    }
+                }
+            }
+
+            // Bridge stoppen
+            Rectangle {
+                width: 100; height: 36; radius: 7
+                property bool _running: parent.parent._bridgeStatus === "running"
+                color: _running && bridgeStopM.containsMouse ? "#7f1d1d" : "#1e2535"
+                border.color: _running ? "#ef4444" : "#2d3748"; border.width: 1
+                Text {
+                    anchors.centerIn: parent
+                    text: "■ Stoppen"
+                    color: parent._running ? "#fca5a5" : "#374151"
+                    font.pixelSize: 10; font.weight: Font.Bold
+                }
+                MouseArea {
+                    id: bridgeStopM; anchors.fill: parent; hoverEnabled: true
+                    enabled: parent._running
+                    onClicked: { if (typeof sitl !== "undefined" && sitl) sitl.stopSensorBridge() }
+                }
+            }
+        }
+
+        // EKF Non-GPS Hinweis (ausklappbar)
+        Rectangle {
+            id: ekfHintBox
+            width: parent.width
+            height: ekfHintContent.implicitHeight + 20
+            radius: 6; color: "#07101a"
+            border.color: "#334155"; border.width: 1
+
+            Column {
+                id: ekfHintContent
+                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
+                spacing: 4
+
+                Text {
+                    text: "⚠  Optical Flow ohne GPS aktivieren (nach Flow-Prüfung)"
+                    color: "#f59e0b"; font.pixelSize: 10; font.weight: Font.Bold
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "param set EK3_SRC1_POSXY 0\n"
+                        + "param set EK3_SRC1_VELXY 5\n"
+                        + "reboot"
+                    color: "#38bdf8"; font.pixelSize: 10; font.family: "Consolas"
+                    lineHeight: 1.6
+                }
+                Text {
+                    width: parent.width; wrapMode: Text.WordWrap
+                    text: "Nur setzen wenn die Flow-Richtung bereits mit aktivem GPS "
+                        + "geprüft wurde (watch OPTICAL_FLOW_RAD in MAVProxy)."
+                    color: "#475569"; font.pixelSize: 9
+                }
+            }
+        }
+
+    }   // Column colMain
+    }   // ScrollView
 }

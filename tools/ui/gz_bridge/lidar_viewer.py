@@ -116,7 +116,7 @@ def main() -> None:
                         (0, 255, 255), 2, tipLength=0.25)
 
         if angles is None or ranges is None:
-            cv2.putText(canvas, "Waiting for signal ...",
+            cv2.putText(canvas, "Warte auf LiDAR-Stream ...",
                         (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
                         (255, 255, 255), 2, cv2.LINE_AA)
         else:

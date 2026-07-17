@@ -23,7 +23,7 @@ def main():
         from PySide6.QtWidgets import QApplication, QMessageBox
 
         from tools.ui._version import VERSION
-        from tools.ui.main_window import MainWindow
+        from tools.ui.legacy.main_window import MainWindow
 
         app = QApplication(sys.argv)
         app.setApplicationName("SkyMeshX")

@@ -28,7 +28,7 @@ def __getattr__(name: str) -> Any:
         globals().update(DroneBackend=DroneBackend, SwarmBackend=SwarmBackend)
         return globals()[name]
     if name == "MainWindow":
-        from tools.ui.main_window import MainWindow
+        from tools.ui.legacy.main_window import MainWindow
 
         globals()["MainWindow"] = MainWindow
         return MainWindow

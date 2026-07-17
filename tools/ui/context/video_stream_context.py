@@ -159,6 +159,10 @@ class VideoStreamContext(QObject):
     def activeTarget(self) -> str:
         return self._active_target
 
+    @Property(str, notify=activeTargetChanged)
+    def activeDroneId(self) -> str:
+        return self._active_drone_id
+
     @Property(int, notify=frameChanged)
     def frameRevision(self) -> int:
         s = self._states.get(self._selected_drone)
@@ -220,8 +224,8 @@ class VideoStreamContext(QObject):
         if self._active_drone_id:
             self._emit_status(self._active_drone_id)
 
-    @Slot(str, str, result=bool)
     @Slot(str, str, str, result=bool)
+    @Slot(str, str, result=bool)
     def startStream(self, url: str, drone_id: str, target: str = "gimbal") -> bool:
         """
         Configure and start decoding a stream URL.
@@ -724,7 +728,9 @@ class VideoStreamContext(QObject):
             "protocol": state.protocol,
             "fps": state.fps,
             "latencyMs": state.latency_ms,
-            "activeTarget": self._active_target,
+            # activeTarget reflects the target of THIS drone's stream so QML
+            # checks like `activeTarget === "gimbal"` work per-drone.
+            "activeTarget": state.target if state.target else self._active_target,
             "target": state.target,
             "hasFrame": state.has_frame,
             "frameRevision": state.frame_revision,

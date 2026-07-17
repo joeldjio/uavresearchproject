@@ -189,6 +189,7 @@ class TraceLogger:
         self._manifest: JsonDict = {}
         self._topic_health: dict[str, JsonDict] = {}
         self._last_ros2_event_at: dict[str, float] = {}
+        self._last_telem_event_at: dict[str, float] = {}
         self._active = False
         # Open file handles kept alive for the duration of a session to avoid
         # the overhead of re-opening on every logged event.
@@ -246,6 +247,7 @@ class TraceLogger:
             self._write_manifest()
             self._touch("ui_events.jsonl")
             self._touch("mission_trace.jsonl")
+            self._touch("apf_events.jsonl")
             self._write_topic_health()
             self._copy_latest_syslog()
             self.log_ui_event("app/session", {"action": "started", "scenario": self._scenario})
@@ -287,6 +289,55 @@ class TraceLogger:
 
     def log_mission_event(self, event_type: str, data: dict | None = None) -> None:
         self._append_jsonl("mission_trace.jsonl", event_type, "mission", data or {})
+
+    def log_apf_event(self, event_type: str, data: dict | None = None) -> None:
+        self._append_jsonl("apf_events.jsonl", event_type, "safety", data or {})
+
+    def log_tab_change(self, tab_index: int, tab_id: str) -> None:
+        self._append_jsonl(
+            "ui_events.jsonl",
+            "ui/tab_change",
+            "ui",
+            {"tabIndex": int(tab_index), "tabId": str(tab_id)},
+        )
+
+    def log_drone_command(self, drone_id: str, command: str, **kwargs: Any) -> None:
+        data: JsonDict = {"droneId": str(drone_id), "command": str(command)}
+        data.update({k: v for k, v in kwargs.items()})
+        self._append_jsonl("ui_events.jsonl", "drone/command", "ui", data)
+
+    def log_telemetry_snapshot(
+        self,
+        drone_id: str,
+        lat: float,
+        lon: float,
+        alt_rel: float,
+        heading: float,
+        armed: bool,
+        fsm_state: str,
+        throttle_s: float = 5.0,
+    ) -> None:
+        """Write a position snapshot to mission_trace at most every *throttle_s* seconds."""
+        now = self._monotonic()
+        key = f"telem:{drone_id}"
+        with self._lock:
+            if now - self._last_telem_event_at.get(key, -9999.0) < throttle_s:
+                return
+            self._last_telem_event_at[key] = now
+        self._append_jsonl(
+            "mission_trace.jsonl",
+            "drone/position",
+            "telemetry",
+            {
+                "droneId": str(drone_id),
+                "lat": round(float(lat), 7),
+                "lon": round(float(lon), 7),
+                "altRel": round(float(alt_rel), 2),
+                "heading": round(float(heading), 1),
+                "armed": bool(armed),
+                "fsmState": str(fsm_state),
+            },
+        )
 
     def log_wp_tracking(
         self,
@@ -421,6 +472,7 @@ class TraceLogger:
                 "appLog": "app.log",
                 "uiEvents": "ui_events.jsonl",
                 "missionTrace": "mission_trace.jsonl",
+                "apfEvents": "apf_events.jsonl",
                 "topicHealth": "ros2_topic_health.json",
                 "video": "video/",
                 "config": "config/",

@@ -12,8 +12,8 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QPainter, QPen, QBrush, QColor, QFont
 
-from tools.ui.widgets import section_header, h_separator, MetricCard
-from tools.ui.style import Colors, DRONE_COLORS
+from tools.ui.legacy.widgets import section_header, h_separator, MetricCard
+from tools.ui.legacy.style import Colors, DRONE_COLORS
 
 try:
     from skymeshx.safety.apf import APFSafetyFilter as _APFSafetyFilter, Pose3D as _Pose3D
