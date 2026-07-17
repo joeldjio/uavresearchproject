@@ -896,7 +896,12 @@ function updateDrones(data) {
 // B-M3: single combined entry point used by main.qml telemetry bridge
 function updateDronesAndSelect(data, did) {
   updateDrones(data);
-  setSelectedDrone(did);
+  // Only re-render selection ring when the selected drone actually changed —
+  // calling setSelectedDrone on every telemetry tick forces setIcon() on all
+  // markers which causes the brief DOM-removal flicker (visual blink).
+  if (did !== selectedDroneId) {
+    setSelectedDrone(did);
+  }
 }
 
 function waypointIcon(index) {

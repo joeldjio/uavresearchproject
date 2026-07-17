@@ -251,12 +251,18 @@ Rectangle {
             Column {
                 anchors.centerIn: parent; spacing: 4
 
-                // Armed status dot — static, no pulse
+                // Armed pulse dot
                 Rectangle {
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: 12; height: 12; radius: 6
                     color: root.t_armed ? "#22c55e" : "#374151"
                     Behavior on color { ColorAnimation { duration: 200 } }
+                    SequentialAnimation on opacity {
+                        running: root.t_armed
+                        loops: Animation.Infinite
+                        NumberAnimation { to: 0.3; duration: 600 }
+                        NumberAnimation { to: 1.0; duration: 600 }
+                    }
                     opacity: root.t_armed ? 1.0 : 0.4
                 }
 
