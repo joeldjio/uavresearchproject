@@ -742,6 +742,8 @@ function setMapType(type) {
 }
 
 var droneMarkers = {}, droneTracks = {}, waypointMarkers = [], waypointLine = null, geofenceCircle = null;
+// Debounce armed state per drone: only commit after 2 consecutive identical values
+var _armedDebounce = {};  // {id: {pending: bool, count: int}}
 // "Dispatched" waypoints — already sent to drones via Mission Start.
 // Drawn in a different colour and kept on the map until the user manually
 // clears them (so the user can visually follow what has been flown).
@@ -757,7 +759,8 @@ function droneColor(id) {
 }
 
 function droneIconKey(id, d, selected) {
-  var headingBucket = Math.round(Number(d.heading || 0) / 5) * 5;
+  // Bucket heading to 10° steps — reduces icon rebuilds from heading jitter
+  var headingBucket = Math.round(Number(d.heading || 0) / 10) * 10;
   return [
     headingBucket,
     d.armed ? "armed" : "safe",
@@ -771,8 +774,9 @@ function setDroneIconIfChanged(id, marker, d, selected, force) {
   if (force || marker._iconKey !== key) {
     marker.setIcon(makeDroneIcon(id, d, selected));
     marker._iconKey = key;
+    // Only touch zIndex when icon actually changes to avoid extra DOM ops
+    marker.setZIndexOffset(selected ? 1000 : 0);
   }
-  marker.setZIndexOffset(selected ? 1000 : 0);
 }
 
 function setSelectedDrone(did) {
@@ -854,8 +858,31 @@ function updateDrones(data) {
       var prev = droneMarkers[id]._lastData || {};
       // B-M8: skip update if position has not changed meaningfully
       var moved = Math.abs((d.lat - (prev.lat||0))) + Math.abs((d.lon - (prev.lon||0))) > DRONE_MOVE_THRESHOLD;
-      var headingChanged = Math.abs(Math.round(d.heading||0) - Math.round(prev.heading||0)) >= 1;
-      var armedChanged = (d.armed !== prev.armed);
+      // Bucket to 10° to match droneIconKey — avoids constant icon rebuilds from heading jitter
+      var headingChanged = Math.abs(
+        Math.round(Number(d.heading||0) / 10) * 10 -
+        Math.round(Number(prev.heading||0) / 10) * 10
+      ) >= 10;
+      // Debounce armed state — require 2 consecutive ticks with the same value
+      // before updating the icon. This prevents SITL heartbeat jitter (armed
+      // flapping true/false) from causing constant setIcon() calls.
+      var rawArmed = d.armed || false;
+      var prevArmed = prev.armed || false;
+      var armedChanged = false;
+      if (rawArmed !== prevArmed) {
+        var db = _armedDebounce[id] || {pending: rawArmed, count: 0};
+        if (db.pending === rawArmed) {
+          db.count++;
+          if (db.count >= 2) { armedChanged = true; _armedDebounce[id] = null; }
+          else                { _armedDebounce[id] = db; }
+        } else {
+          _armedDebounce[id] = {pending: rawArmed, count: 1};
+        }
+        // Use prev armed state until debounce commits
+        d = Object.assign({}, d, {armed: prevArmed});
+      } else {
+        _armedDebounce[id] = null;
+      }
       var typeChanged = (prevType !== droneTypes[id]);
 
       if (moved) {
