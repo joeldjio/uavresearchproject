@@ -1,6 +1,6 @@
 # SkyMeshX
 
-**Research-grade UAV middleware and ground control station for single drones, swarms, missions, PX4/ROS2 simulation, and field workflows.**
+**Python SDK + QML Ground Control Station for ArduPilot/PX4 drones — MAVLink, swarms, SITL, Gazebo sensor bridge, mission planning, and safety filters.**
 
 [![Tests](https://github.com/joeldjio/skymeshx/workflows/Tests/badge.svg)](https://github.com/joeldjio/skymeshx/actions)
 [![Coverage](https://codecov.io/gh/joeldjio/skymeshx/branch/main/graph/badge.svg)](https://codecov.io/gh/joeldjio/skymeshx)
