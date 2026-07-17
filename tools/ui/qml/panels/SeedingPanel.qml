@@ -70,6 +70,10 @@ Rectangle {
             previewError = "Mission context not available"
             return
         }
+        if (mission.fieldBoundaryPoints < 3) {
+            previewError = qsTr("No field defined — draw a boundary on the Map tab first (min. 3 points)")
+            return
+        }
         
         previewLoading = true
         previewError = ""
@@ -1155,6 +1159,9 @@ Rectangle {
                         console.log("Generate seeding preview clicked")
                         generatePreview()
                     }
+                    ToolTip.visible: !enabled && containsMouse
+                    ToolTip.text: qsTr("Draw a boundary on the Map tab first")
+                    ToolTip.delay: 400
                 }
             }
             

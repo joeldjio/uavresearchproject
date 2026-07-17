@@ -224,13 +224,14 @@ class SolarParkInspectionPlanner:
                 )
                 waypoints.append(trigger_wp)
         
-        # Add RTL waypoint if requested
+        # Add RTL waypoint if requested.
+        # lat/lon/alt must be 0 per MAVLink spec for NAV_RETURN_TO_LAUNCH —
+        # this avoids a 0.00 m distance-validation error against the last NAV WP.
         if add_rtl and waypoints:
-            last_wp = waypoints[-1]
             rtl_wp = Waypoint(
-                lat=last_wp.lat,
-                lon=last_wp.lon,
-                alt=last_wp.alt,
+                lat=0.0,
+                lon=0.0,
+                alt=0.0,
                 cmd=20  # MAV_CMD_NAV_RETURN_TO_LAUNCH
             )
             waypoints.append(rtl_wp)
