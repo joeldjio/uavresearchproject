@@ -3,15 +3,20 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 
 from tools.ui.context.mission_context import MissionContext
 
 
 class FakeDrone:
-    def __init__(self, *, armed=False, altitude=0.0):
+    def __init__(self, *, armed=False, altitude=0.0, autopilot="ardupilot"):
         self.armed = armed
         self.altitude = altitude
         self.calls = []
+        # _conn.telemetry.autopilot is read by the start/auto-start logic
+        self._conn = SimpleNamespace(
+            telemetry=SimpleNamespace(autopilot=autopilot)
+        )
 
     def arm(self, timeout=0.0):
         self.calls.append(("arm", timeout))

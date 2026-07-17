@@ -254,19 +254,22 @@ class MAVLinkConnection:
             return False
         self._stop.clear()
         try:
-            # For Windows COM ports, pymavlink needs baud as separate parameter
+            # autoreconnect=False: our own _reconnect_loop handles backoff
+            # reconnection. pymavlink's built-in autoreconnect runs on the
+            # recv thread and prints "EOF on TCP socket" / "sleeping" to
+            # stdout, causing the buffered-writer crash at interpreter shutdown.
             if self._baud is not None:
                 self._mav = mavutil.mavlink_connection(
                     self.connection_string,
                     baud=self._baud,
                     source_system=self.source_system,
-                    autoreconnect=True,
+                    autoreconnect=False,
                 )
             else:
                 self._mav = mavutil.mavlink_connection(
                     self.connection_string,
                     source_system=self.source_system,
-                    autoreconnect=True,
+                    autoreconnect=False,
                 )
             hb = self._mav.wait_heartbeat(timeout=timeout)
             if hb is None:
@@ -525,10 +528,22 @@ class MAVLinkConnection:
         return self._command_long(176, 1, num)
 
     def _set_mode_px4(self, mode: str) -> bool:
-        base_mode = 1
+        # MAV_CMD_DO_SET_MODE (176) for PX4:
+        #   param1 = base_mode (1 = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED)
+        #   param2 = main_mode  (bits 16-23 of custom_mode)
+        #   param3 = sub_mode   (bits 24-31 of custom_mode, for AUTO variants)
+        #
+        # AUTO sub-modes: TAKEOFF=2 / MISSION=4 / RTL=5 / LOITER=3 / LAND=6
+        _AUTO_SUB = {v: k for k, v in _PX4_SUB_MODES_AUTO.items()}
+        if mode in _AUTO_SUB:
+            return self._command_long(176, 1, 4, _AUTO_SUB[mode])
+        # "AUTO" alone → AUTO.MISSION (sub_mode=4) — the expected start-mission command.
+        # Sending sub_mode=0 causes PX4 to default to AUTO.LOITER which doesn't start the mission.
+        if mode == "AUTO":
+            return self._command_long(176, 1, 4, 4)  # AUTO.MISSION
         for num, name in _PX4_MAIN_MODES.items():
             if name == mode:
-                return self._command_long(176, base_mode, num)
+                return self._command_long(176, 1, num)
         return False
 
     def _loop(self):
@@ -546,9 +561,29 @@ class MAVLinkConnection:
             self._reconnect_loop()
 
     def _recv_loop(self):
-        """Inner loop: receive and dispatch MAVLink messages."""
+        """Inner loop: receive and dispatch MAVLink messages.
+
+        Also sends a 1 Hz GCS heartbeat so PX4 registers this process as a
+        connected ground-control station (required to pass the
+        "No connection to the GCS" preflight check and allow arming).
+        """
+        _last_hb = 0.0
         while not self._stop.is_set() and self._mav:
             msg = self._mav.recv_match(blocking=True, timeout=1.0)
+            now = time.time()
+            # Send GCS heartbeat at ~1 Hz independent of message reception.
+            if now - _last_hb >= 1.0:
+                try:
+                    self._mav.mav.heartbeat_send(
+                        6,   # MAV_TYPE_GCS
+                        8,   # MAV_AUTOPILOT_INVALID
+                        0,   # base_mode
+                        0,   # custom_mode
+                        4,   # MAV_STATE_ACTIVE
+                    )
+                    _last_hb = now
+                except Exception:
+                    pass
             if msg is None:
                 continue
             self._parse(msg)
@@ -571,7 +606,7 @@ class MAVLinkConnection:
                 self._mav = mavutil.mavlink_connection(
                     self.connection_string,
                     source_system=self.source_system,
-                    autoreconnect=True,
+                    autoreconnect=False,
                 )
                 hb = self._mav.wait_heartbeat(timeout=10.0)
                 if hb is None:

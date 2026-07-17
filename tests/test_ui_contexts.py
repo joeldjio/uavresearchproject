@@ -203,8 +203,8 @@ def test_ui_license_module_exists():
 
 
 def test_ui_main_window_module_exists():
-    """Test that main_window module can be imported"""
-    from tools.ui import main_window
+    """Test that main_window module can be imported (now in tools.ui.legacy)"""
+    from tools.ui.legacy import main_window
     assert main_window is not None
 
 

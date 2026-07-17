@@ -188,13 +188,16 @@ class Drone:
         if elapsed >= timeout:
             return False
         
-        # Set mode with portion of remaining timeout
+        # Set mode with portion of remaining timeout.
+        # ArduPilot: GUIDED is required before MAV_CMD_NAV_TAKEOFF.
+        # PX4: MAV_CMD_NAV_TAKEOFF (22) is accepted in most modes — skip the mode
+        # switch for PX4 (setting AUTO.TAKEOFF via DO_SET_MODE before arming is
+        # rejected with TEMPORARILY_REJECTED while disarmed).
         ap = self._conn.telemetry.autopilot
-        mode = "OFFBOARD" if ap == "px4" else "GUIDED"
-        mode_timeout = min((timeout - elapsed) * 0.2, 5.0)  # 20% of remaining or 5s max
-        if not self.set_mode(mode, timeout=mode_timeout):
-            return False
-        
+        if ap != "px4":
+            mode_timeout = min((timeout - elapsed) * 0.2, 5.0)
+            self.set_mode("GUIDED", timeout=mode_timeout)  # best-effort for ArduPilot
+
         # Send takeoff command
         self._conn.takeoff(altitude)
         
@@ -263,22 +266,25 @@ class Drone:
         
         start_time = time.time()
         
-        # PX4 uses OFFBOARD for position commands; ArduPilot uses GUIDED.
+        # PX4: use SET_POSITION_TARGET_GLOBAL_INT in OFFBOARD mode for single-point
+        # navigation only when already in OFFBOARD — otherwise use the MAVLink mission
+        # upload path (MissionEngine) which is the correct PX4 interface for
+        # waypoint missions.  For the sequential-goto fallback used here we stay in
+        # whatever mode PX4 is currently in and send the position target; PX4 will
+        # accept it in OFFBOARD if the GCS is already sending a stream, or it can
+        # be in GUIDED (ArduPilot compat alias) on newer builds.
+        # ArduPilot: switch to GUIDED before sending SET_POSITION_TARGET.
         ap = self._conn.telemetry.autopilot
-        mode = "OFFBOARD" if ap == "px4" else "GUIDED"
-        
-        # Check if already in correct mode
-        current_mode = self._conn.telemetry.flight_mode.upper()
-        if current_mode != mode.upper():
-            # Use 20% of timeout for mode change (max 5s)
-            mode_timeout = min(timeout * 0.2, 5.0)
-            if not self.set_mode(mode, timeout=mode_timeout):
-                return False
-            
-            elapsed = time.time() - start_time
-            if elapsed >= timeout:
-                return False
-        
+        if ap != "px4":
+            current_mode = self._conn.telemetry.flight_mode.upper()
+            if current_mode != "GUIDED":
+                mode_timeout = min(timeout * 0.2, 5.0)
+                if not self.set_mode("GUIDED", timeout=mode_timeout):
+                    return False
+                elapsed = time.time() - start_time
+                if elapsed >= timeout:
+                    return False
+
         # Send goto command
         self._conn.goto(lat, lon, alt)
         

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtGui import QColor
 
-from tools.ui.widgets import section_header, h_separator, MetricCard
+from tools.ui.legacy.widgets import section_header, h_separator, MetricCard
 
 try:
     from skymeshx.experiment.scenario import Scenario as _Scenario, ScenarioRunner as _ScenarioRunner

@@ -242,7 +242,7 @@ Item {
     Rectangle {
         id: videoPipOverlay
         anchors { bottom: parent.bottom; right: parent.right; bottomMargin: 12; rightMargin: 12 }
-        width: 240; height: 135   // 16:9
+        width: 360; height: 202   // 16:9
         radius: 8
         z: 10
         color: "#cc0d1117"
@@ -260,7 +260,9 @@ Item {
         Timer { interval: 250; running: true; repeat: true
             onTriggered: {
                 if (typeof videoStream === "undefined" || !videoStream) { videoPipOverlay._videoStatus = {}; return }
-                var did = typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : ""
+                // Prefer the UI-selected drone; fall back to whichever drone has an active stream
+                var did = (typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : "")
+                          || videoStream.activeDroneId
                 videoPipOverlay._videoStatus = did ? videoStream.getVideoStatus(did) : {}
                 if (did && videoPipOverlay.visible)
                     mapVideoFrame.source = videoStream.frameUrl(did)
@@ -270,7 +272,8 @@ Item {
         Connections {
             target: typeof videoStream !== "undefined" ? videoStream : null
             function onFrameChanged(droneId, frameUrl) {
-                var did = typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : ""
+                var did = (typeof Cmp !== "undefined" && Cmp.AppState ? Cmp.AppState.selectedDroneId : "")
+                          || videoStream.activeDroneId
                 if (droneId === did && videoPipOverlay._videoStatus.activeTarget === "map")
                     mapVideoFrame.source = frameUrl
             }
@@ -326,11 +329,177 @@ Item {
                 anchors.fill: parent
                 onClicked: {
                     if (typeof videoStream !== "undefined" && videoStream) {
-                        var did = (typeof Cmp !== "undefined" && Cmp.AppState) ? Cmp.AppState.selectedDroneId : ""
+                        var did = ((typeof Cmp !== "undefined" && Cmp.AppState) ? Cmp.AppState.selectedDroneId : "")
+                                  || videoStream.activeDroneId
                         if (did) videoStream.stopStream(did)
                     }
                 }
             }
+        }
+    }
+
+    // ── Sensor Overlay PIPs — bottom-left ─────────────────────────────────────
+    // LiDAR (OBSTACLE_DISTANCE) and Optical Flow (OPTICAL_FLOW) overlays.
+    // Both are independent toggles; they stack left-to-right above their buttons.
+    property bool _lidarOverlayVisible: false
+    property bool _flowOverlayVisible:  false
+
+    // Wire sitl.sensorOverlayToggled so the SITL Gazebo panel can show/hide
+    // these overlays (same as clicking the toggle buttons directly).
+    Connections {
+        target: typeof sitl !== "undefined" ? sitl : null
+        function onSensorOverlayToggled(sensorType, visible) {
+            if (sensorType === "lidar") root._lidarOverlayVisible = visible
+            else if (sensorType === "flow") root._flowOverlayVisible = visible
+        }
+    }
+
+    // ── Toggle buttons row (bottom-left) ──────────────────────────────────────
+    Row {
+        anchors { bottom: parent.bottom; left: parent.left; bottomMargin: 12; leftMargin: 12 }
+        spacing: 6; z: 11
+
+        // LiDAR toggle
+        Rectangle {
+            id: lidarToggleBtn
+            width: lidarToggleTxt.implicitWidth + 18; height: 26; radius: 5
+            // Lift up above its overlay when visible
+            y: root._lidarOverlayVisible ? -(_lidarOverlay.height + 6) : 0
+            color: root._lidarOverlayVisible ? "#1e3a5f" : "#0d1117cc"
+            border.color: root._lidarOverlayVisible ? "#2563eb" : "#334155"; border.width: 1
+            Behavior on color { ColorAnimation { duration: 120 } }
+            Text {
+                id: lidarToggleTxt
+                anchors.centerIn: parent
+                text: root._lidarOverlayVisible ? "◉ LiDAR" : "◎ LiDAR"
+                color: root._lidarOverlayVisible ? "#93c5fd" : "#475569"
+                font.pixelSize: 10; font.weight: Font.Bold
+            }
+            MouseArea { anchors.fill: parent; onClicked: root._lidarOverlayVisible = !root._lidarOverlayVisible }
+        }
+
+        // Flow toggle
+        Rectangle {
+            id: flowToggleBtn
+            width: flowToggleTxt.implicitWidth + 18; height: 26; radius: 5
+            y: root._flowOverlayVisible ? -(_flowOverlay.height + 6) : 0
+            color: root._flowOverlayVisible ? "#3b0764" : "#0d1117cc"
+            border.color: root._flowOverlayVisible ? "#7c3aed" : "#334155"; border.width: 1
+            Behavior on color { ColorAnimation { duration: 120 } }
+            Text {
+                id: flowToggleTxt
+                anchors.centerIn: parent
+                text: root._flowOverlayVisible ? "◉ Flow" : "◎ Flow"
+                color: root._flowOverlayVisible ? "#c4b5fd" : "#475569"
+                font.pixelSize: 10; font.weight: Font.Bold
+            }
+            MouseArea { anchors.fill: parent; onClicked: root._flowOverlayVisible = !root._flowOverlayVisible }
+        }
+    }
+
+    // ── LiDAR Overlay — OpenCV-Frame 1:1 als JPEG auf der Karte ──────────────
+    Rectangle {
+        id: _lidarOverlay
+        anchors { bottom: parent.bottom; left: parent.left; bottomMargin: 44; leftMargin: 12 }
+        width: 320; height: 320
+        radius: 8; z: 10
+        color: "#dd040710"
+        border.color: "#1e3a5f"; border.width: 1
+        clip: true
+        visible: root._lidarOverlayVisible
+
+        property string _b64: ""
+
+        Connections {
+            target: typeof sitl !== "undefined" ? sitl : null
+            function onLidarFrameReady(b64) { _lidarOverlay._b64 = b64 }
+        }
+
+        // OpenCV-Frame direkt anzeigen
+        Image {
+            anchors { fill: parent; margins: 2 }
+            source: _lidarOverlay._b64 !== "" ? "data:image/jpeg;base64," + _lidarOverlay._b64 : ""
+            fillMode: Image.Stretch
+            cache: false
+            visible: _lidarOverlay._b64 !== ""
+        }
+
+        // Warte-Text solange noch kein Frame da
+        Text {
+            anchors.centerIn: parent
+            text: "◎ LiDAR\n'Auf Karte zeigen' klicken"
+            color: "#374151"; font.pixelSize: 9; font.family: "Consolas"
+            horizontalAlignment: Text.AlignHCenter
+            visible: _lidarOverlay._b64 === ""
+        }
+
+        // Header-Badge
+        Rectangle {
+            anchors { top: parent.top; left: parent.left; margins: 4 }
+            width: lidarBadge.implicitWidth + 8; height: 16; radius: 3; color: "#1e3a5f"
+            Text { id: lidarBadge; anchors.centerIn: parent; text: "◉ LiDAR"
+                color: "#60a5fa"; font.pixelSize: 8; font.weight: Font.Bold }
+        }
+
+        // Close button
+        Rectangle {
+            anchors { top: parent.top; right: parent.right; margins: 4 }
+            width: 16; height: 16; radius: 4; color: "#334155"
+            Text { anchors.centerIn: parent; text: "✕"; color: "#94a3b8"; font.pixelSize: 8 }
+            MouseArea { anchors.fill: parent; onClicked: root._lidarOverlayVisible = false }
+        }
+    }
+
+    // ── Flow Overlay — OpenCV-Frame 1:1 als JPEG auf der Karte ───────────────
+    Rectangle {
+        id: _flowOverlay
+        anchors { bottom: parent.bottom; left: _lidarOverlay.right; bottomMargin: 44; leftMargin: 6 }
+        width: 320; height: 240
+        radius: 8; z: 10
+        color: "#dd04070e"
+        border.color: "#3b0764"; border.width: 1
+        clip: true
+        visible: root._flowOverlayVisible
+
+        property string _b64: ""
+
+        Connections {
+            target: typeof sitl !== "undefined" ? sitl : null
+            function onFlowFrameReady(b64) { _flowOverlay._b64 = b64 }
+        }
+
+        // OpenCV-Frame direkt anzeigen
+        Image {
+            anchors { fill: parent; margins: 2 }
+            source: _flowOverlay._b64 !== "" ? "data:image/jpeg;base64," + _flowOverlay._b64 : ""
+            fillMode: Image.Stretch
+            cache: false
+            visible: _flowOverlay._b64 !== ""
+        }
+
+        // Warte-Text
+        Text {
+            anchors.centerIn: parent
+            text: "◎ Optical Flow\n'Auf Karte zeigen' klicken"
+            color: "#374151"; font.pixelSize: 9; font.family: "Consolas"
+            horizontalAlignment: Text.AlignHCenter
+            visible: _flowOverlay._b64 === ""
+        }
+
+        // Header-Badge
+        Rectangle {
+            anchors { top: parent.top; left: parent.left; margins: 4 }
+            width: flowBadge.implicitWidth + 8; height: 16; radius: 3; color: "#3b0764"
+            Text { id: flowBadge; anchors.centerIn: parent; text: "◉ Flow"
+                color: "#c4b5fd"; font.pixelSize: 8; font.weight: Font.Bold }
+        }
+
+        // Close button
+        Rectangle {
+            anchors { top: parent.top; right: parent.right; margins: 4 }
+            width: 16; height: 16; radius: 4; color: "#334155"
+            Text { anchors.centerIn: parent; text: "✕"; color: "#94a3b8"; font.pixelSize: 8 }
+            MouseArea { anchors.fill: parent; onClicked: root._flowOverlayVisible = false }
         }
     }
 
@@ -588,7 +757,7 @@ function droneColor(id) {
 }
 
 function droneIconKey(id, d, selected) {
-  var headingBucket = Math.round(Number(d.heading || 0));
+  var headingBucket = Math.round(Number(d.heading || 0) / 5) * 5;
   return [
     headingBucket,
     d.armed ? "armed" : "safe",
@@ -1094,15 +1263,18 @@ function _validLatLng(p) {
   return [lat, lon];
 }
 
+var AIRBORNE_THRESHOLD = 1.5; // metres — below this, formation lines are suppressed
+
 function updateFormation(leaderId, positions) {
   clearSwarmVisualization();
 
   if (!leaderId || !positions || positions.length === 0) return;
 
-  // Find leader drone position
+  // Find leader drone position — only draw if leader is airborne
   var leaderPos = null;
   if (droneMarkers[leaderId] && droneMarkers[leaderId]._lastData) {
     var ld = droneMarkers[leaderId]._lastData;
+    if ((ld.alt || 0) < AIRBORNE_THRESHOLD) return;
     leaderPos = _validLatLng([ld.lat, ld.lon]);
   }
 
@@ -1114,6 +1286,9 @@ function updateFormation(leaderId, positions) {
 
     var followerPos = _validLatLng(pos);
     if (!followerPos) return;
+
+    // Suppress line if follower is not airborne
+    if ((pos.alt || 0) < AIRBORNE_THRESHOLD) return;
 
     // Draw line from leader to follower
     var line = L.polyline([leaderPos, followerPos], {

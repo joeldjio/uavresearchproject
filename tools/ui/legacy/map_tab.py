@@ -16,8 +16,8 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtCore import QObject, Signal
 
-from tools.ui.style import DRONE_COLORS
-from tools.ui.widgets import section_header, h_separator
+from tools.ui.legacy.style import DRONE_COLORS
+from tools.ui.legacy.widgets import section_header, h_separator
 
 
 MAP_HTML = """

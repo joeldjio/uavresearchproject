@@ -46,7 +46,7 @@ import threading
 import time
 from typing import Dict, Optional
 
-from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer, QMetaObject, Qt
+from PySide6.QtCore import QObject, Property, Signal, Slot, QTimer, QMetaObject, Qt, Q_ARG
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtCore import QSize
 from PySide6.QtQuick import QQuickImageProvider
@@ -159,6 +159,10 @@ class VideoStreamContext(QObject):
     def activeTarget(self) -> str:
         return self._active_target
 
+    @Property(str, notify=activeTargetChanged)
+    def activeDroneId(self) -> str:
+        return self._active_drone_id
+
     @Property(int, notify=frameChanged)
     def frameRevision(self) -> int:
         s = self._states.get(self._selected_drone)
@@ -220,8 +224,8 @@ class VideoStreamContext(QObject):
         if self._active_drone_id:
             self._emit_status(self._active_drone_id)
 
-    @Slot(str, str, result=bool)
     @Slot(str, str, str, result=bool)
+    @Slot(str, str, result=bool)
     def startStream(self, url: str, drone_id: str, target: str = "gimbal") -> bool:
         """
         Configure and start decoding a stream URL.
@@ -357,39 +361,34 @@ class VideoStreamContext(QObject):
         state.decoder_thread = None
 
     def _decoder_loop(self, drone_id: str, state: _DroneVideoState) -> None:
+        # Prefer native GStreamer-Python (python3-gst-1.0) for RTP/H.264 —
+        # it works without OpenCV and is always available alongside GStreamer.
+        if state.protocol == "rtp-h264-udp":
+            if _gst_available():
+                self._decoder_loop_gst(drone_id, state)
+            else:
+                self._set_error(
+                    drone_id, state,
+                    "GStreamer Python bindings (python3-gst-1.0) not found.\n"
+                    "Fix: sudo apt install python3-gst-1.0 gstreamer1.0-plugins-good "
+                    "gstreamer1.0-plugins-bad gstreamer1.0-libav",
+                )
+            return
+
+        # RTSP / MJPEG fallback: use OpenCV
         cv2 = _load_cv2()
         if cv2 is None:
             self._set_error(
-                drone_id,
-                state,
-                "OpenCV (cv2) not installed. "
-                "Fix: sudo apt install python3-opencv   "
-                "or   pip install opencv-python",
+                drone_id, state,
+                "OpenCV (cv2) not installed.\n"
+                "Fix: sudo apt install python3-opencv",
             )
             return
 
-        # Verify that GStreamer was compiled into OpenCV before attempting
-        # an RTP/H.264 pipeline -- without it the VideoCapture will silently fail.
-        if state.protocol == "rtp-h264-udp":
-            build_info = getattr(cv2, "getBuildInformation", lambda: "")()
-            gst_lines = [line for line in build_info.splitlines() if "GStreamer" in line]
-            gst_enabled = any("YES" in line.upper() for line in gst_lines)
-            if not gst_enabled:
-                self._set_error(
-                    drone_id,
-                    state,
-                    "OpenCV compiled without GStreamer -- RTP/H.264 streams will not work. "
-                    "Fix: sudo apt install python3-opencv  "
-                    "(system package includes the GStreamer backend; "
-                    "replaces the pip opencv-python package)",
-                )
-                return
-
-        source = _opencv_source(state)
-        backend = getattr(cv2, "CAP_GSTREAMER", 0) if state.protocol == "rtp-h264-udp" else 0
-        cap = cv2.VideoCapture(source, backend) if backend else cv2.VideoCapture(source)
+        cap = cv2.VideoCapture(state.url)
         if not cap or not cap.isOpened():
-            self._set_error(drone_id, state, f"Could not open video stream: {state.url} (source: {source})")
+            self._set_error(drone_id, state,
+                            f"Could not open video stream: {state.url}")
             return
 
         frame_count = 0
@@ -406,7 +405,7 @@ class VideoStreamContext(QObject):
                         QMetaObject.invokeMethod(
                             self, "_emit_status_queued",
                             Qt.ConnectionType.QueuedConnection,
-                            drone_id,
+                            Q_ARG(str, drone_id),
                         )
                     state.decoder_stop.wait(timeout=0.03)
                     continue
@@ -419,33 +418,12 @@ class VideoStreamContext(QObject):
                 if image is None or image.isNull():
                     continue
 
-                state.last_frame_ts = now
+                self._push_frame(drone_id, state, image, now, frame_count, fps_window_start)
                 frame_count += 1
                 elapsed = max(0.001, now - fps_window_start)
                 if elapsed >= 1.0:
-                    state.fps = frame_count / elapsed
                     frame_count = 0
                     fps_window_start = now
-
-                with state.frame_lock:
-                    state.frame = image
-                    state.has_frame = True
-                    state.frame_revision += 1
-
-                if state.status != STATUS_RECEIVING:
-                    state.status = STATUS_RECEIVING
-                    self.logMessage.emit("INFO", f"[VIDEO] {drone_id}: live frames receiving")
-
-                frame_url = self.frameUrl(drone_id)
-                # Marshal signal emissions to the main thread; direct emission
-                # from a background thread is undefined behaviour in Qt.
-                QMetaObject.invokeMethod(
-                    self,
-                    "_emit_frame_from_main",
-                    Qt.ConnectionType.QueuedConnection,
-                    drone_id,
-                    frame_url,
-                )
         except Exception as exc:
             err_msg = str(exc)
             state.status = STATUS_ERROR
@@ -453,14 +431,133 @@ class VideoStreamContext(QObject):
             QMetaObject.invokeMethod(
                 self, "_set_error_from_main",
                 Qt.ConnectionType.QueuedConnection,
-                drone_id,
-                err_msg,
+                Q_ARG(str, drone_id), Q_ARG(str, err_msg),
             )
         finally:
             try:
                 cap.release()
             except Exception:
                 pass
+
+    def _decoder_loop_gst(self, drone_id: str, state: _DroneVideoState) -> None:
+        """GStreamer-Python decoder for RTP/H.264 streams (PX4 Gazebo default)."""
+        import gi
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst, GLib
+
+        Gst.init(None)
+
+        pipeline_desc = (
+            f"udpsrc port={state.port} "
+            f"caps=\"application/x-rtp,media=video,encoding-name=H264,payload=96\" "
+            f"! rtph264depay ! h264parse ! avdec_h264 "
+            f"! videoconvert ! video/x-raw,format=RGB "
+            f"! appsink name=sink drop=true sync=false max-buffers=1"
+        )
+
+        pipeline = Gst.parse_launch(pipeline_desc)
+        sink = pipeline.get_by_name("sink")
+        sink.set_property("emit-signals", False)  # we use pull_sample()
+
+        pipeline.set_state(Gst.State.PLAYING)
+        self.logMessage.emit(
+            "INFO", f"[VIDEO] {drone_id}: GStreamer pipeline started on udp://0.0.0.0:{state.port}"
+        )
+
+        frame_count = 0
+        fps_window_start = time.monotonic()
+        min_frame_interval = 1.0 / _MAX_RENDER_FPS
+        last_emit = 0.0
+
+        try:
+            while not state.decoder_stop.is_set():
+                sample = sink.emit("pull-sample")
+                if sample is None:
+                    # No frame yet — brief wait then retry
+                    state.decoder_stop.wait(timeout=0.03)
+                    continue
+
+                buf = sample.get_buffer()
+                caps = sample.get_caps()
+                structure = caps.get_structure(0)
+                width  = structure.get_value("width")
+                height = structure.get_value("height")
+
+                ok, map_info = buf.map(Gst.MapFlags.READ)
+                if not ok:
+                    continue
+                try:
+                    raw = bytes(map_info.data)
+                finally:
+                    buf.unmap(map_info)
+
+                if not raw or width <= 0 or height <= 0:
+                    continue
+
+                now = time.monotonic()
+                if now - last_emit < min_frame_interval:
+                    continue
+                last_emit = now
+
+                # Scale down if wider than max
+                if width > _MAX_FRAME_WIDTH:
+                    scale = _MAX_FRAME_WIDTH / width
+                    new_w = _MAX_FRAME_WIDTH
+                    new_h = max(1, int(height * scale))
+                    image = QImage(raw, width, height,
+                                   width * 3, QImage.Format.Format_RGB888)
+                    image = image.scaled(new_w, new_h,
+                                         Qt.AspectRatioMode.KeepAspectRatio,
+                                         Qt.TransformationMode.SmoothTransformation).copy()
+                else:
+                    image = QImage(raw, width, height,
+                                   width * 3, QImage.Format.Format_RGB888).copy()
+
+                if image.isNull():
+                    continue
+
+                self._push_frame(drone_id, state, image, now, frame_count, fps_window_start)
+                frame_count += 1
+                elapsed = max(0.001, now - fps_window_start)
+                if elapsed >= 1.0:
+                    frame_count = 0
+                    fps_window_start = now
+
+        except Exception as exc:
+            err_msg = str(exc)
+            QMetaObject.invokeMethod(
+                self, "_set_error_from_main",
+                Qt.ConnectionType.QueuedConnection,
+                Q_ARG(str, drone_id), Q_ARG(str, err_msg),
+            )
+        finally:
+            pipeline.set_state(Gst.State.NULL)
+            self.logMessage.emit("INFO", f"[VIDEO] {drone_id}: GStreamer pipeline stopped")
+
+    def _push_frame(self, drone_id: str, state: _DroneVideoState,
+                    image: "QImage", now: float,
+                    frame_count: int, fps_window_start: float) -> None:
+        """Store a decoded frame and schedule a QML update from the main thread."""
+        elapsed = max(0.001, now - fps_window_start)
+        if elapsed >= 1.0:
+            state.fps = frame_count / elapsed
+
+        with state.frame_lock:
+            state.frame = image
+            state.has_frame = True
+            state.frame_revision += 1
+        state.last_frame_ts = now
+
+        if state.status != STATUS_RECEIVING:
+            state.status = STATUS_RECEIVING
+            self.logMessage.emit("INFO", f"[VIDEO] {drone_id}: live frames receiving")
+
+        frame_url = self.frameUrl(drone_id)
+        QMetaObject.invokeMethod(
+            self, "_emit_frame_from_main",
+            Qt.ConnectionType.QueuedConnection,
+            Q_ARG(str, drone_id), Q_ARG(str, frame_url),
+        )
 
     @Slot(str, str)
     def _emit_frame_from_main(self, drone_id: str, frame_url: str) -> None:
@@ -520,12 +617,12 @@ class VideoStreamContext(QObject):
                     QMetaObject.invokeMethod(
                         self, "_emit_status_queued",
                         Qt.ConnectionType.QueuedConnection,
-                        drone_id,
+                        Q_ARG(str, drone_id),
                     )
                     QMetaObject.invokeMethod(
                         self, "_log_queued",
                         Qt.ConnectionType.QueuedConnection,
-                        "INFO", f"[VIDEO] {drone_id}: port {state.port} in use — assuming stream active",
+                        Q_ARG(str, "INFO"), Q_ARG(str, f"[VIDEO] {drone_id}: port {state.port} in use — assuming stream active"),
                     )
                     state.probe_stop.wait(timeout=3.0)
                     continue
@@ -540,12 +637,12 @@ class VideoStreamContext(QObject):
                 QMetaObject.invokeMethod(
                     self, "_emit_status_queued",
                     Qt.ConnectionType.QueuedConnection,
-                    drone_id,
+                    Q_ARG(str, drone_id),
                 )
                 QMetaObject.invokeMethod(
                     self, "_log_queued",
                     Qt.ConnectionType.QueuedConnection,
-                    "INFO", f"[VIDEO] {drone_id}: stream receiving on port {state.port}",
+                    Q_ARG(str, "INFO"), Q_ARG(str, f"[VIDEO] {drone_id}: stream receiving on port {state.port}"),
                 )
 
                 # Keep checking every 3s to detect stalls
@@ -557,7 +654,7 @@ class VideoStreamContext(QObject):
                     QMetaObject.invokeMethod(
                         self, "_emit_status_queued",
                         Qt.ConnectionType.QueuedConnection,
-                        drone_id,
+                        Q_ARG(str, drone_id),
                     )
                 state.probe_stop.wait(timeout=1.0)
 
@@ -574,13 +671,12 @@ class VideoStreamContext(QObject):
                 QMetaObject.invokeMethod(
                     self, "_set_error_from_main",
                     Qt.ConnectionType.QueuedConnection,
-                    drone_id,
-                    exc_msg,
+                    Q_ARG(str, drone_id), Q_ARG(str, exc_msg),
                 )
                 QMetaObject.invokeMethod(
                     self, "_log_queued",
                     Qt.ConnectionType.QueuedConnection,
-                    "WARN", f"[VIDEO] {drone_id}: probe error — {exc_msg}",
+                    Q_ARG(str, "WARN"), Q_ARG(str, f"[VIDEO] {drone_id}: probe error — {exc_msg}"),
                 )
                 state.probe_stop.wait(timeout=3.0)
 
@@ -632,7 +728,9 @@ class VideoStreamContext(QObject):
             "protocol": state.protocol,
             "fps": state.fps,
             "latencyMs": state.latency_ms,
-            "activeTarget": self._active_target,
+            # activeTarget reflects the target of THIS drone's stream so QML
+            # checks like `activeTarget === "gimbal"` work per-drone.
+            "activeTarget": state.target if state.target else self._active_target,
             "target": state.target,
             "hasFrame": state.has_frame,
             "frameRevision": state.frame_revision,
@@ -705,17 +803,15 @@ def _load_cv2():
         return None
 
 
-def _opencv_source(state: _DroneVideoState) -> str:
-    if state.protocol == "rtp-h264-udp":
-        # Single f-string — no implicit string concatenation across different
-        # string types, which prevents silent pipeline corruption on re-indent.
-        return (
-            f"udpsrc port={state.port} caps=\"application/x-rtp,media=video,"
-            f"encoding-name=H264,payload=96\" ! rtph264depay ! h264parse ! "
-            f"avdec_h264 ! videoconvert ! video/x-raw,format=BGR ! "
-            f"appsink drop=true sync=false max-buffers=1"
-        )
-    return state.url
+def _gst_available() -> bool:
+    """Return True if python3-gst-1.0 (GObject Introspection) is importable."""
+    try:
+        import gi  # noqa: F401
+        gi.require_version("Gst", "1.0")
+        from gi.repository import Gst  # noqa: F401
+        return True
+    except Exception:
+        return False
 
 
 def _frame_to_qimage(cv2, frame) -> Optional[QImage]:

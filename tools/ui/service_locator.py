@@ -158,6 +158,11 @@ def build_default_locator(app=None) -> ServiceLocator:
 
         return VideoStreamContext()
 
+    def _sitl():
+        from tools.ui.context.sitl_context import SITLContext
+
+        return SITLContext()
+
     loc.register_factory("swarm", _swarm)
     loc.register_factory("telemetryModel", _telemetry)
     loc.register_factory("experiment", _experiment)
@@ -172,6 +177,7 @@ def build_default_locator(app=None) -> ServiceLocator:
     loc.register_factory("updater", _updater)
     loc.register_factory("licenseManager", _license)
     loc.register_factory("videoStream", _video_stream)
+    loc.register_factory("sitl", _sitl)
     return loc
 
 
@@ -192,6 +198,7 @@ def wire(locator: ServiceLocator) -> None:
     ros2 = locator["ros2"]
     bag_playback = locator["bagPlayback"]
     escape = locator["escape"]
+    sitl = locator["sitl"]
     
     # Inject swarm context into mission context for mission upload
     mission.set_swarm_context(swarm)
@@ -216,6 +223,8 @@ def wire(locator: ServiceLocator) -> None:
 
     trace_logger = TraceLogger.get()
     trace.sessionError.connect(lambda msg: swarm.logMessage.emit("ERROR", f"[TRACE] {msg}"))
+
+    # ── Mission events ────────────────────────────────────────────────────────
     mission.logMessage.connect(
         lambda level, text: trace_logger.log_mission_event(
             "mission_log", {"level": level, "message": text}
@@ -230,6 +239,80 @@ def wire(locator: ServiceLocator) -> None:
         lambda success, message: trace_logger.log_mission_event(
             "mission_upload",
             {"status": "finished", "success": bool(success), "message": message},
+        )
+    )
+    mission.coverageCleared.connect(
+        lambda: trace_logger.log_mission_event("map/clear", {"layer": "all"})
+    )
+    mission.drawingModeChanged.connect(
+        lambda active: trace_logger.log_mission_event(
+            "map/drawing_mode", {"active": bool(active)}
+        )
+    )
+
+    # ── Drone connection / FSM / command events ───────────────────────────────
+    swarm.connectedChanged.connect(
+        lambda drone_id, connected: trace_logger.log_ui_event(
+            "drone/connected", {"droneId": drone_id, "connected": bool(connected)}
+        )
+    )
+    swarm.fsmStateChanged.connect(
+        lambda drone_id, state: trace_logger.log_ui_event(
+            "drone/fsm", {"droneId": drone_id, "state": state}
+        )
+    )
+    swarm.armCommandSent.connect(
+        lambda drone_id: trace_logger.log_drone_command(drone_id, "arm")
+    )
+    swarm.disarmCommandSent.connect(
+        lambda drone_id: trace_logger.log_drone_command(drone_id, "disarm")
+    )
+    swarm.takeoffCommandSent.connect(
+        lambda drone_id, alt: trace_logger.log_drone_command(drone_id, "takeoff", altitude=alt)
+    )
+    swarm.landCommandSent.connect(
+        lambda drone_id: trace_logger.log_drone_command(drone_id, "land")
+    )
+    swarm.rtlCommandSent.connect(
+        lambda drone_id: trace_logger.log_drone_command(drone_id, "rtl")
+    )
+    swarm.modeChangeCommandSent.connect(
+        lambda drone_id, mode: trace_logger.log_drone_command(drone_id, "mode_change", mode=mode)
+    )
+
+    # ── Telemetry position snapshots (throttled to 1 per drone per 5 s) ───────
+    def _on_telemetry(snapshot: dict) -> None:
+        if not isinstance(snapshot, dict):
+            return
+        drone_id = snapshot.get("droneId") or snapshot.get("drone_id", "")
+        if not drone_id:
+            return
+        lat = snapshot.get("lat", 0.0) or 0.0
+        lon = snapshot.get("lon", 0.0) or 0.0
+        if lat == 0.0 and lon == 0.0:
+            return
+        trace_logger.log_telemetry_snapshot(
+            drone_id=str(drone_id),
+            lat=float(lat),
+            lon=float(lon),
+            alt_rel=float(snapshot.get("alt_rel", 0.0) or 0.0),
+            heading=float(snapshot.get("yaw", 0.0) or 0.0),
+            armed=bool(snapshot.get("armed", False)),
+            fsm_state=str(snapshot.get("fsmState", "") or ""),
+        )
+
+    swarm.telemetryUpdated.connect(_on_telemetry)
+
+    # ── Safety / APF events ───────────────────────────────────────────────────
+    safety.geofenceBreached.connect(
+        lambda drone_id, reason: trace_logger.log_apf_event(
+            "safety/geofence_breach", {"droneId": drone_id, "reason": reason}
+        )
+    )
+    safety.avoidanceTriggered.connect(
+        lambda drone_id, lat, lon, alt: trace_logger.log_apf_event(
+            "safety/apf_avoidance",
+            {"droneId": drone_id, "lat": lat, "lon": lon, "alt": alt},
         )
     )
 
@@ -367,3 +450,16 @@ def wire(locator: ServiceLocator) -> None:
 
     # VideoStream logs → swarm log
     video_stream.logMessage.connect(swarm.logMessage)
+
+    # SITL logs → swarm log
+    sitl.logMessage.connect(swarm.logMessage)
+
+    # SITL auto-connect: when SITL/Swarm starts, add drones to swarm automatically
+    def _on_sitl_auto_connect(connections: list) -> None:
+        for entry in connections:
+            drone_id = entry.get("id", "")
+            conn_str = entry.get("connection_string", "")
+            if drone_id and conn_str:
+                swarm.addDrone(drone_id, conn_str)
+
+    sitl.autoConnectReady.connect(_on_sitl_auto_connect)

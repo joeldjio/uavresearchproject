@@ -71,27 +71,38 @@ Rectangle {
     function climbColor2()  { return t_climb > 0.3 ? "#22c55e" : t_climb < -0.3 ? "#ef4444" : "#94a3b8" }
     function battColor2()   { return t_battery_pct > 50 ? "#22c55e" : t_battery_pct > 20 ? "#f59e0b" : "#ef4444" }
 
-    // ── Refresh timer ─────────────────────────────────────────────────────
+    // ── Refresh timer (200 ms = 5 Hz — matches typical MAVLink stream rate)
+    // Guard every assignment: QML fires property-change notifications even when
+    // the new value equals the old one, which triggers re-evaluation of all
+    // bound expressions (colors, Behaviors, Canvas repaints).  In a swarm
+    // scenario the timer is shared across all drones and the redundant
+    // re-evaluations cause visible flickering.
     Timer {
-        interval: 100; running: true; repeat: true
+        interval: 200; running: true; repeat: true
         onTriggered: {
-            root.t_armed       = snap("armed",       false)
-            root.t_mode        = snap("flight_mode", "---")
-            root.t_roll        = snap("roll",        0)
-            root.t_pitch       = snap("pitch",       0)
-            root.t_yaw         = snap("yaw",         0)
-            root.t_alt_rel     = snap("alt_rel",     0)
-            root.t_alt         = snap("alt",         0)
-            root.t_groundspeed = snap("groundspeed", 0)
-            root.t_climb       = snap("climb",       0)
-            root.t_throttle    = snap("throttle",    0)
-            root.t_battery_pct = snap("battery_pct", -1)
-            root.t_battery_v   = snap("battery_v",   0)
-            root.t_gps_fix     = snap("gps_fix",     0)
-            root.t_satellites  = snap("satellites",  0)
-            attCanvas.rollVal  = root.t_roll
-            attCanvas.pitchVal = root.t_pitch
-            attCanvas.requestPaint()
+            var v
+            v = snap("armed", false);       if (v !== root.t_armed)       root.t_armed       = v
+            v = snap("flight_mode", "---"); if (v !== root.t_mode)        root.t_mode        = v
+            v = snap("yaw",         0);     if (v !== root.t_yaw)         root.t_yaw         = v
+            v = snap("alt_rel",     0);     if (v !== root.t_alt_rel)     root.t_alt_rel     = v
+            v = snap("alt",         0);     if (v !== root.t_alt)         root.t_alt         = v
+            v = snap("groundspeed", 0);     if (v !== root.t_groundspeed) root.t_groundspeed = v
+            v = snap("climb",       0);     if (v !== root.t_climb)       root.t_climb       = v
+            v = snap("throttle",    0);     if (v !== root.t_throttle)    root.t_throttle    = v
+            v = snap("battery_pct", -1);    if (v !== root.t_battery_pct) root.t_battery_pct = v
+            v = snap("battery_v",   0);     if (v !== root.t_battery_v)   root.t_battery_v   = v
+            v = snap("gps_fix",     0);     if (v !== root.t_gps_fix)     root.t_gps_fix     = v
+            v = snap("satellites",  0);     if (v !== root.t_satellites)  root.t_satellites  = v
+            // Attitude: only repaint canvas when values actually changed
+            var newRoll  = snap("roll",  0)
+            var newPitch = snap("pitch", 0)
+            if (newRoll !== root.t_roll || newPitch !== root.t_pitch) {
+                root.t_roll        = newRoll
+                root.t_pitch       = newPitch
+                attCanvas.rollVal  = newRoll
+                attCanvas.pitchVal = newPitch
+                attCanvas.requestPaint()
+            }
         }
     }
 

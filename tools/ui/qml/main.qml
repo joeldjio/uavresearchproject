@@ -40,10 +40,15 @@ Window {
         { id: "experiment", svg: "experiment", label: "Scenario",  color: "#f59e0b", title: "Experiment" },
         { id: "flightlog",  svg: "log",        label: "FlightLog", color: "#a78bfa", title: "Flight Log" },
         { id: "log",        svg: "log",        label: "Log",       color: "#64748b", title: "System Log" },
+        { id: "sitl",       svg: "experiment", label: "SITL",      color: "#f97316", title: "ArduPilot SITL" },
         { id: "help",       svg: "log",        label: "Help",      color: "#fbbf24", title: "Help / Feature Reference" },
     ]
 
     property int currentTab: 0
+    onCurrentTabChanged: {
+        if (typeof trace !== "undefined" && trace)
+            trace.logTabChange(currentTab, tabs[currentTab] ? tabs[currentTab].id : "")
+    }
 
     function selectTab(idx) { currentTab = idx }
     function selectTabById(tid) {
@@ -842,15 +847,21 @@ Window {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     onClicked: {
-                                        // Clear everything: waypoints, boundary, coverage, solar rows
+                                        // Clear everything: waypoints, boundary, coverage, solar rows, seeding
                                         globalMissionWaypoints.clear()
                                         root.syncWaypointsToMap()
                                         if (typeof mission !== "undefined" && mission) {
                                             mission.clearFieldBoundary()
                                             mission.clearSolarPanelRows()
+                                            mission.clearMissionWaypoints()
                                         }
-                                        if (mapLoader.item && mapLoader.item.clearFieldCoverage) {
-                                            mapLoader.item.clearFieldCoverage()
+                                        if (mapLoader.item) {
+                                            if (mapLoader.item.clearFieldCoverage)
+                                                mapLoader.item.clearFieldCoverage()
+                                            if (mapLoader.item.clearSeedingMission)
+                                                mapLoader.item.clearSeedingMission()
+                                            if (mapLoader.item.clearSolarInspection)
+                                                mapLoader.item.clearSolarInspection()
                                         }
                                     }
                                 }
@@ -929,13 +940,17 @@ Window {
                             var id = ids[i]
                             var s = swarm.droneSnapshot(id)
                             if (s && s.lat !== undefined && s.lat !== 0.0) {
-                                drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic") }
+                                drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic"), alt: s.alt_rel || 0 }
                                 if (!root._zoomedDrones[id]) {
-                                    var zd = Object.assign({}, root._zoomedDrones)
-                                    zd[id] = true
-                                    root._zoomedDrones = zd
-                                    if (root.currentTab === 0)
+                                    if (root.currentTab === 0) {
+                                        // Only mark as zoomed once the flyTo actually executes
+                                        var zd = Object.assign({}, root._zoomedDrones)
+                                        zd[id] = true
+                                        root._zoomedDrones = zd
                                         mapLoader.item.flyTo(s.lat, s.lon)
+                                    }
+                                    // If on another tab, leave the flag unset so the tab-switch
+                                    // handler will still trigger the zoom when Map becomes visible.
                                 }
                             }
                         }
@@ -953,19 +968,40 @@ Window {
                 Connections {
                     target: root
                     function onCurrentTabChanged() {
-                        if (root.currentTab === 0 && workspace._mapDirty && mapLoader.item) {
-                            workspace._mapDirty = false
-                            var drones = {}
-                            var ids = (typeof swarm !== "undefined" && swarm) ? swarm.droneIds() : []
-                            if (ids) {
-                                for (var i = 0; i < ids.length; i++) {
-                                    var id = ids[i]
-                                    var s = swarm.droneSnapshot(id)
-                                    if (s && s.lat !== undefined && s.lat !== 0.0)
-                                        drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic") }
+                        if (root.currentTab === 0 && mapLoader.item) {
+                            if (workspace._mapDirty) {
+                                workspace._mapDirty = false
+                                var drones = {}
+                                var ids = (typeof swarm !== "undefined" && swarm) ? swarm.droneIds() : []
+                                if (ids) {
+                                    for (var i = 0; i < ids.length; i++) {
+                                        var id = ids[i]
+                                        var s = swarm.droneSnapshot(id)
+                                        if (s && s.lat !== undefined && s.lat !== 0.0)
+                                            drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic"), alt: s.alt_rel || 0 }
+                                    }
+                                }
+                                mapLoader.item.updateDronesAndSelect(JSON.stringify(drones), root.selectedDroneId)
+                            }
+                            // Zoom to any drone that was connected while we were on another tab
+                            if (typeof swarm !== "undefined" && swarm) {
+                                var zIds = swarm.droneIds()
+                                if (zIds) {
+                                    for (var zi = 0; zi < zIds.length; zi++) {
+                                        var zId = zIds[zi]
+                                        if (!root._zoomedDrones[zId]) {
+                                            var zs = swarm.droneSnapshot(zId)
+                                            if (zs && zs.lat !== undefined && zs.lat !== 0.0) {
+                                                var zd = Object.assign({}, root._zoomedDrones)
+                                                zd[zId] = true
+                                                root._zoomedDrones = zd
+                                                mapLoader.item.flyTo(zs.lat, zs.lon)
+                                                break  // zoom to first unvisited drone only
+                                            }
+                                        }
+                                    }
                                 }
                             }
-                            mapLoader.item.updateDronesAndSelect(JSON.stringify(drones), root.selectedDroneId)
                         }
                     }
                 }
@@ -1028,7 +1064,8 @@ Window {
                                 var overrides = {
                                     "flightlog": "FlightLogPanel",
                                     "gimbal":    "GimbalPanel",
-                                    "ros2":      "ROS2Panel"
+                                    "ros2":      "ROS2Panel",
+                                    "sitl":      "SITLPanel"
                                 }
                                 var name = overrides[cfg.id] || (cfg.id.charAt(0).toUpperCase() + cfg.id.slice(1) + "Panel")
                                 return "panels/" + name + ".qml"

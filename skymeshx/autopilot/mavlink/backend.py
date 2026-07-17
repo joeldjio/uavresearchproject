@@ -12,7 +12,7 @@ Auto-detects autopilot type from HEARTBEAT.autopilot field.
 import math
 import threading
 import time
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 from skymeshx.autopilot.base import AutopilotBackend, TelemetrySnapshot
 
@@ -103,7 +103,11 @@ class MAVLinkBackend(AutopilotBackend):
         return True
 
     def takeoff(self, altitude: float) -> bool:
-        self.set_mode("GUIDED")
+        # PX4 uses TAKEOFF sub-mode; ArduPilot uses GUIDED before MAV_CMD_NAV_TAKEOFF.
+        if self._autopilot == "px4":
+            self._cmd_long(176, 1, 4, 2)  # DO_SET_MODE: main=AUTO(4), sub=TAKEOFF(2)
+        else:
+            self.set_mode("GUIDED")
         time.sleep(0.2)
         self._cmd_long(22, 0,0,0,0,0,0, altitude)
         return True
@@ -131,10 +135,17 @@ class MAVLinkBackend(AutopilotBackend):
         return True
 
     def set_mode(self, mode: str) -> bool:
+        # Try ArduPilot mode map first, then PX4 if not found.
         mode_map = {v: k for k, v in _COPTER_MODES.items()}
         num = mode_map.get(mode.upper())
         if num is not None:
             self._cmd_long(176, 1, num)
+            return True
+        # PX4 mode map
+        px4_map = {v: k for k, v in _PX4_MODES.items()}
+        px4_num = px4_map.get(mode.upper())
+        if px4_num is not None:
+            self._cmd_long(176, 1, px4_num)
             return True
         return False
 
@@ -142,6 +153,64 @@ class MAVLinkBackend(AutopilotBackend):
         p = list(params) + [0] * (7 - len(params))
         self._cmd_long(cmd_id, *p[:7])
         return True
+
+    def set_live_param(self, name: str, value: float) -> bool:
+        """Send PARAM_SET to the vehicle via MAVLink.
+
+        Args:
+            name:  Parameter name (max 16 chars, ArduPilot convention).
+            value: New value as float.
+
+        Returns:
+            True if the message was sent (no ACK waiting), False if not connected.
+        """
+        if not self._conn:
+            return False
+        pname = name.encode("utf-8")[:16].ljust(16, b"\x00")
+        self._conn.mav.param_set_send(
+            self._conn.target_system,
+            self._conn.target_component,
+            pname,
+            float(value),
+            mavutil.mavlink.MAV_PARAM_TYPE_REAL32,
+        )
+        return True
+
+    def fetch_all_params(self, timeout: float = 10.0) -> Dict[str, float]:
+        """Request all parameters via PARAM_REQUEST_LIST and collect PARAM_VALUE replies.
+
+        Runs synchronously (blocks the calling thread).  Intended to be called
+        from a worker thread, not the Qt main thread.
+
+        Args:
+            timeout: Maximum seconds to wait for the full parameter list.
+
+        Returns:
+            Dict mapping param name → value.  Empty dict on error/timeout.
+        """
+        if not self._conn or not _MAV_OK:
+            return {}
+        params: Dict[str, float] = {}
+        expected_count = None
+        self._conn.mav.param_request_list_send(
+            self._conn.target_system,
+            self._conn.target_component,
+        )
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            remaining = deadline - time.time()
+            msg = self._conn.recv_match(
+                type="PARAM_VALUE", blocking=True, timeout=min(remaining, 1.0)
+            )
+            if msg is None:
+                break
+            pname = msg.param_id.rstrip("\x00")
+            params[pname] = float(msg.param_value)
+            if expected_count is None:
+                expected_count = msg.param_count
+            if expected_count and len(params) >= expected_count:
+                break
+        return params
 
     def on_message(self, msg_type: str, cb: Callable):
         self._cbs.setdefault(msg_type, []).append(cb)

@@ -9,8 +9,8 @@ from pathlib import Path
 import sys
 import os
 
-# Add tools directory to path
-sys.path.insert(0, str(Path(__file__).parent.parent / "tools"))
+# Add tools/analysis directory to path (file moved from tools/ to tools/analysis/)
+sys.path.insert(0, str(Path(__file__).parent.parent / "tools" / "analysis"))
 
 from benchmark_bag_compression import CompressionBenchmark, BenchmarkResult
 

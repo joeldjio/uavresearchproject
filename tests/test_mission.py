@@ -138,7 +138,11 @@ class TestUpload:
     def test_upload_continues_after_failed_send(self, fake_conn):
         """If a single item raises, upload returns False without partial state."""
         eng = MissionEngine(fake_conn)
-        eng.from_list([{"lat": 47.0, "lon": 8.0, "alt": 10.0}] * 3)
+        eng.from_list([
+            {"lat": 47.0000, "lon": 8.0000, "alt": 10.0},
+            {"lat": 47.0010, "lon": 8.0010, "alt": 10.0},
+            {"lat": 47.0020, "lon": 8.0020, "alt": 10.0},
+        ])
         # Make the second item_int_send raise.
         original = fake_conn._mav.mav.mission_item_int_send
         call_count = {"n": 0}
