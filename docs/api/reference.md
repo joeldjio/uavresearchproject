@@ -551,7 +551,7 @@ SITLContext._BRIDGE_PARAMS = {
 
 ## GazeboMavlinkSensorBridge
 
-Standalone-Skript `tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py`.
+Standalone-Skript `tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py`.
 
 ```bash
 python3 gazebo_mavlink_sensor_bridge.py [--mavlink CONN] [--camera-topic TOPIC] \

@@ -17,7 +17,7 @@ from PySide6.QtTest import QTest  # noqa: E402
 @pytest.mark.ui
 def test_ui_startup_and_window_creation(qapp):
     """E2E: UI application starts and main window is created"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     # Create main window
     window = MainWindow()
@@ -39,7 +39,7 @@ def test_ui_startup_and_window_creation(qapp):
 @pytest.mark.ui
 def test_navigation_between_panels(qapp, wired_locator):
     """E2E: Navigate between different panels"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     window = MainWindow()
     window.show()
@@ -66,7 +66,7 @@ def test_navigation_between_panels(qapp, wired_locator):
 @pytest.mark.ui
 def test_drone_connection_workflow(qapp, wired_locator, fake_conn):
     """E2E: Connect drone via UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     # Setup fake connection
     swarm_ctx = wired_locator.get("swarm")
@@ -90,7 +90,7 @@ def test_drone_connection_workflow(qapp, wired_locator, fake_conn):
 @pytest.mark.ui
 def test_arm_disarm_workflow(qapp, wired_locator, fake_conn):
     """E2E: ARM and DISARM drone via UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     swarm_ctx = wired_locator.get("swarm")
     swarm_ctx.add_drone("UAV_1", fake_conn)
@@ -122,7 +122,7 @@ def test_arm_disarm_workflow(qapp, wired_locator, fake_conn):
 @pytest.mark.ui
 def test_apf_toggle_workflow(qapp, wired_locator):
     """E2E: Toggle APF safety filter via UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     safety_ctx = wired_locator.get("safety")
     
@@ -149,7 +149,7 @@ def test_apf_toggle_workflow(qapp, wired_locator):
 @pytest.mark.ui
 def test_formation_selection_workflow(qapp, wired_locator, fake_conn):
     """E2E: Select formation via UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     swarm_ctx = wired_locator.get("swarm")
     swarm_ctx.add_drone("UAV_1", fake_conn)
@@ -172,7 +172,7 @@ def test_formation_selection_workflow(qapp, wired_locator, fake_conn):
 @pytest.mark.ui
 def test_ros2_bag_recording_workflow(qapp, wired_locator):
     """E2E: Start/stop ROS2 bag recording via UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     ros2_ctx = wired_locator.get("ros2")
     
@@ -199,7 +199,7 @@ def test_ros2_bag_recording_workflow(qapp, wired_locator):
 @pytest.mark.ui
 def test_experiment_execution_workflow(qapp, wired_locator):
     """E2E: Execute experiment script via UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     exp_ctx = wired_locator.get("experiment")
     
@@ -224,7 +224,7 @@ def test_experiment_execution_workflow(qapp, wired_locator):
 @pytest.mark.ui
 def test_telemetry_update_workflow(qapp, wired_locator, fake_conn, snap_factory):
     """E2E: Telemetry updates propagate through UI"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     
     swarm_ctx = wired_locator.get("swarm")
     swarm_ctx.add_drone("UAV_1", fake_conn)
@@ -251,7 +251,7 @@ def test_telemetry_update_workflow(qapp, wired_locator, fake_conn, snap_factory)
 @pytest.mark.slow
 def test_performance_ui_responsiveness(qapp, wired_locator, fake_conn, snap_factory):
     """E2E: UI remains responsive under high telemetry load"""
-    from tools.ui.main_window import MainWindow
+    from tools.ui.legacy.main_window import MainWindow
     import time
     
     swarm_ctx = wired_locator.get("swarm")

@@ -81,6 +81,11 @@ class TraceContext(QObject):
         self.sessionChanged.emit()
         return summary_path
 
+    @Slot(int, str)
+    def logTabChange(self, tab_index: int, tab_id: str) -> None:
+        """Called from QML when the user switches tabs."""
+        self._logger.log_tab_change(tab_index, str(tab_id))
+
     @Slot(result=bool)
     def openFolder(self) -> bool:
         folder = self._logger.session_path

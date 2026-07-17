@@ -118,7 +118,7 @@ def main() -> None:
 
         if frame is None:
             waiting = np.zeros((240, 320, 3), dtype=np.uint8)
-            cv2.putText(waiting, "Waiting for Strean ...",
+            cv2.putText(waiting, "Warte auf Kamerastream ...",
                         (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (255, 255, 255), 2, cv2.LINE_AA)
             cv2.imshow("Gazebo Optical Flow", waiting)
@@ -133,7 +133,7 @@ def main() -> None:
             previous_gray       = gray
             previous_frame_time = now
             display = frame.copy()
-            cv2.putText(display, "Initialising Optical Flow ...",
+            cv2.putText(display, "Initialisiere Optical Flow ...",
                         (10, 25), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                         (0, 255, 255), 2, cv2.LINE_AA)
         else:

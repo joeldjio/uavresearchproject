@@ -1,6 +1,6 @@
 # Gazebo → ArduPilot MAVLink Sensor-Bridge
 
-> Datei: `tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py`
+> Datei: `tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py`
 > Zugehöriger GCS-Bereich: Gimbal-Tab → Sensor Bridge
 
 ---
@@ -86,10 +86,10 @@ reboot
 
 ```bash
 # Standard-SITL
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py --no-display
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py --no-display
 
 # Mit expliziten Topics
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py \
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py \
     --mavlink udpin:0.0.0.0:14550 \
     --camera-topic /flow_camera/image \
     --lidar-topic /lidar/scan \
@@ -100,12 +100,12 @@ python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py \
 
 ```bash
 # USB-Serial (z. B. Pixhawk 4)
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py \
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py \
     --mavlink /dev/ttyACM0:115200 \
     --no-display
 
 # Netzwerk
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py \
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py \
     --mavlink tcp:192.168.1.10:5760 \
     --no-display
 ```
@@ -114,7 +114,7 @@ python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py \
 
 ```bash
 # Ohne --no-display → öffnet zwei Fenster
-python3 tools/ui/gz_viewers/gazebo_mavlink_sensor_bridge.py
+python3 tools/ui/gz_bridge/gazebo_mavlink_sensor_bridge.py
 # Beenden mit Q oder ESC im Fenster
 ```
 
@@ -242,10 +242,10 @@ Für isolierten Test einzelner Sensoren:
 
 ```bash
 # LiDAR Polarplot
-python3 tools/ui/gz_viewers/lidar_viewer.py --topic /lidar/scan
+python3 tools/ui/gz_bridge/lidar_viewer.py --topic /lidar/scan
 
 # Optical Flow Kamerabild
-python3 tools/ui/gz_viewers/flow_viewer.py --topic /flow_camera/image
+python3 tools/ui/gz_bridge/flow_viewer.py --topic /flow_camera/image
 ```
 
 Beenden jeweils mit **Q** oder **ESC** im Fenster.
