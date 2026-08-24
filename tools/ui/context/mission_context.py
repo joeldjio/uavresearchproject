@@ -1145,6 +1145,180 @@ class MissionContext(QObject):
             self.coverageCleared.emit()  # Hide coverage
             self.logMessage.emit("INFO", "[MISSION] Preview disabled - coverage hidden")
 
+    @Slot(str, result=str)
+    def loadWaypointFile(self, path: str) -> str:
+        """Read a .json or .txt waypoint file and return a JSON array string.
+
+        Supported formats:
+          - JSON array:  [{lat, lon, alt}, ...]  or  [[lat, lon, alt], ...]
+          - JSON object: {"waypoints": [...]}
+          - ArduPilot QGC plain-text (.txt / .waypoints):
+                QGC WPL 110
+                0  1  0  16  0  0  0  0  lat  lon  alt  1
+          - Simple CSV / space-delimited:  lat lon [alt]  (one WP per line)
+
+        Returns a JSON array string on success, "" on error (error is also
+        emitted via logMessage so QML can display it).
+        """
+        import json as _json
+        import os
+
+        path = path.strip()
+        # Qt file URLs (file:///…) → plain filesystem path
+        if path.startswith("file:///"):
+            path = path[7:]
+        elif path.startswith("file://"):
+            path = path[6:]
+
+        if not os.path.isfile(path):
+            self.logMessage.emit("ERROR", f"[WP] File not found: {path}")
+            return ""
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                raw = fh.read()
+        except OSError as exc:
+            self.logMessage.emit("ERROR", f"[WP] Cannot read file: {exc}")
+            return ""
+
+        raw = raw.strip()
+        wps: list = []
+
+        # ── JSON branch ──────────────────────────────────────────────────
+        # Altitude is intentionally ignored — the user sets it via the
+        # InstrBar "Set Alt" field before executing.  All waypoints get
+        # alt=10.0 as a placeholder that is overwritten in QML.
+        if path.lower().endswith(".json") or raw.startswith("[") or raw.startswith("{"):
+            try:
+                data = _json.loads(raw)
+            except Exception as exc:
+                self.logMessage.emit("ERROR", f"[WP] JSON parse error: {exc}")
+                return ""
+            if isinstance(data, dict) and "waypoints" in data:
+                data = data["waypoints"]
+            if not isinstance(data, list):
+                self.logMessage.emit("ERROR", "[WP] JSON must be an array")
+                return ""
+            for item in data:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    lat = float(item[0]); lon = float(item[1])
+                    wps.append({"lat": lat, "lon": lon, "alt": 10.0})
+                elif isinstance(item, dict):
+                    lat = float(item.get("lat", item.get("latitude", 0.0)))
+                    lon = float(item.get("lon", item.get("longitude", 0.0)))
+                    wps.append({"lat": lat, "lon": lon, "alt": 10.0})
+
+        # ── QGC / plain-text branch ───────────────────────────────────────
+        else:
+            for line in raw.splitlines():
+                line = line.strip()
+                # Skip blank, comment, separator and header lines
+                if not line:
+                    continue
+                if line.startswith(("#", "=", "-", "QGC")):
+                    continue
+                # Skip lines that contain no digits at all (pure text headers)
+                if not any(ch.isdigit() for ch in line):
+                    continue
+                parts = line.split()
+
+                # ── Try to extract the last two numeric tokens as lat/lon ──────
+                # This handles arbitrary prefix columns (name, x, y, …) as long
+                # as the rightmost two float-parseable tokens are lat and lon.
+                # Covers formats like:
+                #   name  x  y  lat  lon          (5-col, e.g. tree-GPS export)
+                #   name  lat  lon                 (3-col with label)
+                #   lat  lon                       (2-col plain)
+                #   lat  lon  alt                  (3-col plain, alt ignored)
+                #   QGC WPL 110 (12-col)           handled separately below
+                #
+                # QGC WPL 110: idx cur frame cmd p1 p2 p3 p4 lat lon alt autocontinue
+                if len(parts) >= 11:
+                    try:
+                        if int(parts[0]) == 0 and int(parts[1]) == 1:
+                            continue  # skip home-waypoint marker row
+                        lat = float(parts[8]); lon = float(parts[9])
+                        if lat == 0.0 and lon == 0.0:
+                            continue
+                        wps.append({"lat": lat, "lon": lon, "alt": 10.0})
+                    except (ValueError, IndexError):
+                        continue
+                else:
+                    # Walk from the right looking for the last two parseable floats
+                    # that look like a valid (lat, lon) pair.
+                    floats = []
+                    for tok in reversed(parts):
+                        try:
+                            floats.insert(0, float(tok))
+                            if len(floats) == 2:
+                                break
+                        except ValueError:
+                            floats = []   # non-numeric token resets the window
+                    if len(floats) == 2:
+                        lat, lon = floats[0], floats[1]
+                        # Sanity-check: valid lat/lon ranges
+                        if -90.0 <= lat <= 90.0 and -180.0 <= lon <= 180.0:
+                            wps.append({"lat": lat, "lon": lon, "alt": 10.0})
+
+        if not wps:
+            self.logMessage.emit(
+                "WARN", f"[WP] No valid waypoints found in: {os.path.basename(path)}"
+            )
+            return ""
+
+        self.logMessage.emit(
+            "INFO",
+            f"[WP] Loaded {len(wps)} waypoints from {os.path.basename(path)}"
+        )
+        return _json.dumps(wps)
+
+    @Slot(str)
+    def executeMissionFromFile(self, waypoints_json: str) -> None:
+        """Upload and auto-start a mission from a pre-parsed waypoints JSON string.
+
+        This is the same pipeline as uploadCoverageMission() but uses the
+        caller-supplied waypoints instead of the internally generated ones.
+        The auto-start (GUIDED → ARM → TAKEOFF → AUTO) is identical to the
+        Coverage panel "Upload Mission" button.
+        """
+        import json as _json
+        try:
+            data = _json.loads(waypoints_json)
+        except Exception as exc:
+            self.logMessage.emit("ERROR", f"[WP] Invalid waypoints JSON: {exc}")
+            return
+        if not data:
+            self.logMessage.emit("WARN", "[WP] Empty waypoint list — nothing to execute")
+            return
+
+        # Normalise to (lat, lon, alt) tuples expected by _upload_mission_worker
+        wps: List[Tuple[float, float, float]] = []
+        for item in data:
+            if isinstance(item, dict):
+                wps.append((float(item["lat"]), float(item["lon"]),
+                             float(item.get("alt", 10.0))))
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                wps.append((float(item[0]), float(item[1]),
+                             float(item[2]) if len(item) > 2 else 10.0))
+        if not wps:
+            self.logMessage.emit("WARN", "[WP] No valid waypoints after normalisation")
+            return
+
+        if not self._swarm_context:
+            self.logMessage.emit("ERROR", "[WP] SwarmContext not available")
+            return
+
+        self._clear_uploaded_missions()
+        self.missionUploadStarted.emit("file")
+        self.logMessage.emit(
+            "INFO", f"[WP] Uploading {len(wps)} file waypoints and starting mission…"
+        )
+        threading.Thread(
+            target=self._upload_mission_worker,
+            args=(wps,),
+            daemon=True,
+        ).start()
+
     @Slot(result="QVariantList")
     def getCoverageWaypoints(self):
         """Return coverage waypoints as list of dicts for QML/JavaScript."""

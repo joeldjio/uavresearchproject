@@ -81,6 +81,7 @@ class ConnectionStatus(Enum):
 
 from skymeshx.ros.context import acquire_ros, release_ros
 from skymeshx.ros.px4_mission import PX4MissionUploader
+from skymeshx.exceptions import DependencyError, ROS2NotAvailableError, TopicTimeoutError
 
 try:
     from px4_msgs.msg import (
@@ -200,13 +201,13 @@ class PX4ROS2Bridge:
         max_reconnect_delay: float = 30.0,
     ):
         if not _ROS2_OK:
-            raise ImportError("rclpy not found — install ROS2 Humble+")
+            raise DependencyError("rclpy", "pip install rclpy  # or install ROS2 Humble+")
         if not _PX4_MSGS_OK:
-            raise ImportError(
-                "px4_msgs not found.\n"
-                "cd ~/ros2_ws/src && git clone https://github.com/PX4/px4_msgs\n"
-                "cd ~/ros2_ws && colcon build --packages-select px4_msgs\n"
-                "source install/setup.bash"
+            raise DependencyError(
+                "px4_msgs",
+                "cd ~/ros2_ws/src && git clone https://github.com/PX4/px4_msgs"
+                " && cd ~/ros2_ws && colcon build --packages-select px4_msgs"
+                " && source install/setup.bash",
             )
         self._drone     = drone
         self._ns_prefix = f"/{namespace}" if namespace else ""
@@ -544,7 +545,7 @@ class PX4ROS2Bridge:
                         age = time.time() - self._last_message_time
                         if age > self._connection_timeout:
                             print(f"[px4-bridge] No messages for {age:.1f}s - connection lost")
-                            raise ConnectionError("Topic timeout")
+                            raise TopicTimeoutError(f"/{self._ns_prefix}", self._connection_timeout)
                 
                 # Clean exit
                 break

@@ -19,6 +19,8 @@ try:
 except ImportError:
     _ROS2_OK = False
 
+from skymeshx.exceptions import ROS2NotAvailableError
+
 
 @dataclass
 class BagInfo:
@@ -46,7 +48,7 @@ class ROS2BagRecorder:
             output_dir: Directory to store bag files (default: ./bags)
         """
         if not _ROS2_OK:
-            raise RuntimeError("rclpy not available - cannot use ROS2 bag recorder")
+            raise ROS2NotAvailableError("rclpy not available — cannot use ROS2 bag recorder")
         
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)

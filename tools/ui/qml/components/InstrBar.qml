@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import QtQuick.Dialogs
 import "." as Cmp
 
 Rectangle {
@@ -10,6 +11,9 @@ Rectangle {
     // Explicit swarm reference (passed from Loader)
     property var swarmRef: (typeof swarm !== "undefined") ? swarm : null
     property string selectedDroneId: ""
+
+    // Expose the uploadMissionTile Column so main.qml can connect to its signal
+    property alias uploadMissionTile: uploadMissionTile
 
     // ── Resolve target list for quick commands / mode switch ─────────────
     // 1. If the user ticked one or more drones in the SwarmPanel mission-target
@@ -782,6 +786,193 @@ Rectangle {
                         text: (typeof safety !== "undefined" && safety) ? safety.violationCount : "0"
                         color: (typeof safety !== "undefined" && safety && safety.violationCount > 0) ? "#fca5a5" : "#64748b"
                         font.pixelSize: 10; font.weight: Font.Bold; font.family: "Consolas"
+                    }
+                }
+            }
+        }
+
+        // Divider
+        Rectangle { width: 1; height: 80; color: "#1e293b"; anchors.verticalCenter: parent.verticalCenter }
+
+        // ── UPLOAD MISSION ───────────────────────────────────────────────
+        Column {
+            id: uploadMissionTile
+            anchors.verticalCenter: parent.verticalCenter; spacing: 5
+
+            // Internal state
+            property string _wpJson:    ""   // raw coords JSON from file (alt=10 placeholder)
+            property int    _wpCount:   0
+            property string _fileName:  ""
+            property bool   _uploading: false
+
+            // Emitted after loading (→ main.qml draws WPs on map) and on clear (empty string)
+            signal fileWaypointsReady(string wpJson)
+
+            // Re-build _wpJson with the current setAltField value and return it
+            function _wpJsonWithAlt() {
+                var alt = parseFloat(setAltField.text)
+                if (isNaN(alt) || alt <= 0) alt = 10.0
+                try {
+                    var arr = JSON.parse(uploadMissionTile._wpJson)
+                    for (var i = 0; i < arr.length; i++) arr[i].alt = alt
+                    return JSON.stringify(arr)
+                } catch (e) { return uploadMissionTile._wpJson }
+            }
+
+            Text {
+                text: "UPLOAD MISSION"
+                color: "#334155"; font.pixelSize: 8; font.weight: Font.Bold
+                font.letterSpacing: 0.8
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            // File chooser button
+            Rectangle {
+                width: 160; height: 28; radius: 5
+                anchors.horizontalCenter: parent.horizontalCenter
+                color: filePickMa.containsMouse ? "#1e3a5f" : "#0d1117"
+                border.color: uploadMissionTile._wpCount > 0 ? "#22c55e" : "#2563eb"
+                border.width: 1
+                Behavior on color { ColorAnimation { duration: 80 } }
+
+                Row {
+                    anchors.centerIn: parent; spacing: 6
+                    Text {
+                        text: "📂"
+                        font.pixelSize: 11
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: uploadMissionTile._fileName !== "" ? uploadMissionTile._fileName : "Choose .json / .txt"
+                        color: uploadMissionTile._wpCount > 0 ? "#86efac" : "#93c5fd"
+                        font.pixelSize: 9; font.weight: Font.Bold
+                        font.family: "Consolas"
+                        elide: Text.ElideMiddle
+                        width: 118
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                MouseArea {
+                    id: filePickMa; anchors.fill: parent; hoverEnabled: true
+                    onClicked: wpFileDialog.open()
+                }
+            }
+
+            // WP count badge + clear
+            Row {
+                anchors.horizontalCenter: parent.horizontalCenter; spacing: 4
+                visible: uploadMissionTile._wpCount > 0
+
+                Rectangle {
+                    width: 70; height: 20; radius: 10
+                    color: "#14532d"
+                    Text {
+                        anchors.centerIn: parent
+                        text: uploadMissionTile._wpCount + " WP"
+                        color: "#86efac"; font.pixelSize: 9; font.weight: Font.Bold
+                        font.family: "Consolas"
+                    }
+                }
+
+                Rectangle {
+                    width: 20; height: 20; radius: 10
+                    color: clearWpMa.containsMouse ? "#7f1d1d" : "#1e2535"
+                    border.color: "#ef4444"; border.width: 1
+                    Behavior on color { ColorAnimation { duration: 80 } }
+                    Text { anchors.centerIn: parent; text: "✕"; color: "#fca5a5"; font.pixelSize: 9 }
+                    MouseArea {
+                        id: clearWpMa; anchors.fill: parent; hoverEnabled: true
+                        onClicked: {
+                            uploadMissionTile._wpJson  = ""
+                            uploadMissionTile._wpCount = 0
+                            uploadMissionTile._fileName = ""
+                            uploadMissionTile.fileWaypointsReady("")   // clear map
+                        }
+                    }
+                }
+            }
+
+            // Placeholder when nothing loaded
+            Text {
+                visible: uploadMissionTile._wpCount === 0
+                text: "No file loaded"
+                color: "#334155"; font.pixelSize: 8; font.italic: true
+                anchors.horizontalCenter: parent.horizontalCenter
+            }
+
+            // Execute Mission button
+            Rectangle {
+                width: 160; height: 28; radius: 5
+                anchors.horizontalCenter: parent.horizontalCenter
+                enabled: uploadMissionTile._wpCount > 0 && !uploadMissionTile._uploading
+                opacity: enabled ? 1.0 : 0.4
+
+                color: execMa.containsPress ? "#166534"
+                     : execMa.containsMouse  ? "#15803d" : "#14532d"
+                border.color: "#22c55e"; border.width: 1
+                Behavior on color { ColorAnimation { duration: 80 } }
+
+                Row {
+                    anchors.centerIn: parent; spacing: 6
+                    Text {
+                        text: uploadMissionTile._uploading ? "⏳" : "▶"
+                        color: "#86efac"; font.pixelSize: 12
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                    Text {
+                        text: uploadMissionTile._uploading ? "UPLOADING…" : "EXECUTE MISSION"
+                        color: "#86efac"; font.pixelSize: 9; font.weight: Font.Bold
+                        font.letterSpacing: 0.4
+                        anchors.verticalCenter: parent.verticalCenter
+                    }
+                }
+
+                MouseArea {
+                    id: execMa; anchors.fill: parent; hoverEnabled: true
+                    onClicked: {
+                        if (typeof mission === "undefined" || !mission) return
+                        if (uploadMissionTile._wpJson === "") return
+                        // Bake current altitude into each waypoint before upload
+                        var finalJson = uploadMissionTile._wpJsonWithAlt()
+                        uploadMissionTile._uploading = true
+                        mission.executeMissionFromFile(finalJson)
+                    }
+                }
+
+                // Reset uploading flag once upload signals finish
+                Connections {
+                    target: (typeof mission !== "undefined") ? mission : null
+                    function onMissionUploadFinished(success, message) {
+                        uploadMissionTile._uploading = false
+                    }
+                    function onMissionUploadStarted(mode) {
+                        if (mode === "file") uploadMissionTile._uploading = true
+                    }
+                }
+            }
+
+            // File dialog
+            FileDialog {
+                id: wpFileDialog
+                title: "Waypoint-Datei wählen"
+                nameFilters: ["Waypoint files (*.json *.txt *.waypoints)", "All files (*)"]
+                onAccepted: {
+                    if (typeof mission === "undefined" || !mission) return
+                    var path = wpFileDialog.selectedFile.toString()
+                    var result = mission.loadWaypointFile(path)
+                    if (result !== "") {
+                        uploadMissionTile._wpJson  = result
+                        uploadMissionTile._wpCount = JSON.parse(result).length
+                        var parts = path.split("/")
+                        uploadMissionTile._fileName = parts[parts.length - 1]
+                        // Draw on map with current altitude applied
+                        uploadMissionTile.fileWaypointsReady(uploadMissionTile._wpJsonWithAlt())
+                    } else {
+                        uploadMissionTile._wpJson  = ""
+                        uploadMissionTile._wpCount = 0
+                        uploadMissionTile._fileName = ""
+                        uploadMissionTile.fileWaypointsReady("")
                     }
                 }
             }

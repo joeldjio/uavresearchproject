@@ -20,6 +20,11 @@ import time
 from typing import Callable, Dict, List, Optional, Tuple
 
 from skymeshx.core.telemetry import TelemetryState
+from skymeshx.exceptions import (
+    DependencyError,
+    HeartbeatTimeoutError,
+    InvalidConnectionStringError,
+)
 
 try:
     from pymavlink import mavextra, mavutil
@@ -181,7 +186,7 @@ class MAVLinkConnection:
         baud: Optional[int] = None,
     ):
         if not _MAVLINK_OK:
-            raise ImportError("pymavlink not installed: pip install pymavlink")
+            raise DependencyError("pymavlink", "pip install pymavlink")
         self.connection_string = connection_string
         self.source_system = source_system
         self._baud = baud
@@ -209,7 +214,7 @@ class MAVLinkConnection:
         """Validate a MAVLink connection string.
 
         Returns the (possibly stripped) string on success, raises
-        ``ValueError`` with a descriptive message on failure.
+        ``InvalidConnectionStringError`` with a descriptive message on failure.
 
         Accepted formats:
           tcp:HOST:PORT    e.g. tcp:127.0.0.1:5760
@@ -220,14 +225,14 @@ class MAVLinkConnection:
           COMx             Windows serial port (optionally :BAUD)
         """
         if not s or not s.strip():
-            raise ValueError("Connection string must not be empty")
+            raise InvalidConnectionStringError("Connection string must not be empty")
         s = s.strip()
         # tcp/udp/udpin/udpout:HOST:PORT
         m = re.match(r"^(tcp|udp|udpin|udpout):([^:]+):(\d+)$", s, re.IGNORECASE)
         if m:
             port = int(m.group(3))
             if not (1 <= port <= 65535):
-                raise ValueError(f"Port {port} is out of range (1-65535)")
+                raise InvalidConnectionStringError(f"Port {port} is out of range (1-65535)")
             return s
         # Linux serial: /dev/tty* (bare or with :BAUD suffix)
         if re.match(r"^/dev/", s):
@@ -238,7 +243,7 @@ class MAVLinkConnection:
         # Windows COM port: COMx or COMx:BAUD
         if re.match(r"^COM\d+(?::\d+)?$", s, re.IGNORECASE):
             return s
-        raise ValueError(
+        raise InvalidConnectionStringError(
             f"Unrecognized connection string {s!r}. "
             "Expected tcp:HOST:PORT, udp:HOST:PORT, udpin:HOST:PORT, "
             "/dev/ttyUSBx[:BAUD], serial:/dev/..., or COMx[:BAUD]"
@@ -610,7 +615,7 @@ class MAVLinkConnection:
                 )
                 hb = self._mav.wait_heartbeat(timeout=10.0)
                 if hb is None:
-                    raise ConnectionError("No heartbeat received")
+                    raise HeartbeatTimeoutError("No heartbeat received")
             except Exception as e:
                 print(f"[mav] Reconnect failed: {e}")
                 backoff = min(backoff * 2, 30.0)

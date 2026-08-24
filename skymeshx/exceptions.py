@@ -30,9 +30,13 @@ SkyMeshXError (base)
 │   └── BatteryLowError
 ├── DependencyError
 ├── TimeoutError
-└── DataError
-    ├── LogFileError
-    └── InvalidDataFormatError
+├── DataError
+│   ├── LogFileError
+│   └── InvalidDataFormatError
+├── SimulationError
+├── ScriptAbortedError
+├── LLMResponseError
+└── SessionError
 
 Usage:
     from skymeshx.exceptions import ConnectionError, TimeoutError
@@ -239,4 +243,30 @@ class LogFileError(DataError):
 
 class InvalidDataFormatError(DataError):
     """Raised when data format is invalid or corrupted."""
+    pass
+
+
+# Simulation errors
+class SimulationError(SkyMeshXError):
+    """Raised when SITL/Gazebo simulation fails to start or crashes."""
+    pass
+
+
+# Script execution errors
+class ScriptAbortedError(SkyMeshXError):
+    """Raised when a user script is stopped before completion."""
+    pass
+
+
+# LLM / AI errors
+class LLMResponseError(SkyMeshXError):
+    """Raised when LLM response cannot be parsed or is invalid."""
+    def __init__(self, message: str, raw_response: str = ""):
+        self.raw_response = raw_response
+        super().__init__(message)
+
+
+# Session / lifecycle errors
+class SessionError(SkyMeshXError):
+    """Raised when a trace/recording session is in an invalid state."""
     pass

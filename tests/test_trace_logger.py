@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from skymeshx.core.trace_logger import TraceLogger, analyze_trace_bundle
+from skymeshx.exceptions import SessionError
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -121,7 +122,7 @@ def test_trace_logger_blocks_nested_sessions(tmp_path):
 
     try:
         logger.start_session("two", {})
-    except RuntimeError as exc:
+    except SessionError as exc:
         assert "already active" in str(exc)
     else:
         raise AssertionError("Expected nested trace session to be rejected")

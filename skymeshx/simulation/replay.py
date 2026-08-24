@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Generator, Iterator, List, Optional
 
 from skymeshx.autopilot.base import TelemetrySnapshot
+from skymeshx.exceptions import DependencyError, InvalidDataFormatError
 
 
 @dataclass
@@ -61,7 +62,7 @@ class TelemetryReplay:
         elif suffix == ".bin":
             self._load_bin()
         else:
-            raise ValueError(f"Unsupported log format: {suffix}. Supported: .csv, .json, .bin")
+            raise InvalidDataFormatError(f"Unsupported log format: {suffix!r}. Supported: .csv, .json, .bin")
         self._loaded = True
         print(f"[replay] Loaded {len(self._frames)} frames from {self.path.name}")
 
@@ -158,7 +159,7 @@ class TelemetryReplay:
         try:
             from pymavlink import DFReader
         except ImportError:
-            raise ImportError("pymavlink required for .bin replay: pip install pymavlink")
+            raise DependencyError("pymavlink", "pip install pymavlink")
         log = DFReader.DFReader_binary(str(self.path))
         while True:
             msg = log.recv_msg()

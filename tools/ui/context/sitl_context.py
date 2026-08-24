@@ -974,12 +974,17 @@ class SITLContext(QObject):
             else:
                 angles = np.linspace(angle_min, angle_max, ranges.size, dtype=np.float32)
 
-            range_min    = float(msg.range_min)
-            range_max    = float(msg.range_max)
-            display_range = range_max
+            range_min     = float(msg.range_min)
+            range_max     = float(msg.range_max)
+            display_range = min(range_max, 30.0)
             valid = np.isfinite(ranges) & (ranges >= range_min) & (ranges <= range_max)
             shown_angles = angles[valid]
             shown_ranges = ranges[valid]
+
+            # Clip to display_range so distant points don't compress the view
+            in_view = shown_ranges <= display_range
+            shown_angles = shown_angles[in_view]
+            shown_ranges = shown_ranges[in_view]
 
             # ── Render exactly like lidar_viewer.py ──────────────────────────
             W = 300; cx = W // 2; cy = W // 2
@@ -1215,17 +1220,29 @@ class SITLContext(QObject):
             self._log("ERROR", f"[SITL] Invalid Gazebo config: {exc}")
             return
 
-        world     = cfg.get("world",      "iris_runway.sdf")
-        verbosity = int(cfg.get("verbosity", 4))
-        gz_ws     = cfg.get("gz_ws_path",
-                             self._cfg.get("gazebo", {}).get(
-                                 "gz_ws_path", str(Path.home() / "gz_ws" / "src")
-                             ))
+        world        = cfg.get("world",      "iris_runway.sdf")
+        verbosity    = int(cfg.get("verbosity", 4))
+        gz_ws        = cfg.get("gz_ws_path",
+                               self._cfg.get("gazebo", {}).get(
+                                   "gz_ws_path", str(Path.home() / "gz_ws" / "src")
+                               ))
+        # gz_resource_path: prepend to GZ_SIM_RESOURCE_PATH so models/ inside
+        # gz_ws are found by gz sim without an install step.
+        gz_res       = cfg.get("gz_resource_path", gz_ws)
+
+        env_line = ""
+        if gz_res:
+            env_line = (
+                f'export GZ_SIM_RESOURCE_PATH='
+                f'{shlex.quote(gz_res)}:$GZ_SIM_RESOURCE_PATH\n'
+            )
 
         script = (
+            f'{_gz_env_prefix()}'
             f'echo "=== Gazebo Harmonic ==="\n'
             f'echo "cwd: {gz_ws}"\n'
             f'cd {shlex.quote(gz_ws)}\n'
+            f'{env_line}'
             f'gz sim -v{verbosity} -r {shlex.quote(world)}\n'
             f'echo "--- Gazebo exited ---" ; read\n'
         )
@@ -1271,19 +1288,39 @@ class SITLContext(QObject):
 
     @Slot(result="QVariantList")
     def detectStreamingTopics(self) -> List[str]:
-        """Run: gz topic -l | grep -i streaming (3s timeout)"""
+        """Return gz topics that look like camera / image / streaming sources.
+
+        Matches topics containing any of:
+          streaming, camera, image, nadir, /cam, video, rgb, thermal
+        Excludes internal Gazebo bookkeeping topics that start with
+          /world/, /stats, /clock, /gui, /navsat
+        """
         gz = shutil.which("gz")
         if not gz:
             return []
         try:
             result = subprocess.run(
                 [gz, "topic", "-l"],
-                capture_output=True, text=True, timeout=3
+                capture_output=True, text=True, timeout=3,
             )
             lines = result.stdout.splitlines()
-            return [l for l in lines if "streaming" in l.lower()]
         except Exception:
             return []
+
+        _INCLUDE = ("streaming", "camera", "image", "nadir", "/cam",
+                    "video", "rgb", "thermal", "depth")
+        _EXCLUDE = ("/world/", "/stats", "/clock", "/gui/",
+                    "/navsat", "/joint_state", "/cmd_", "sensor_info",
+                    "camera_info")
+
+        found = []
+        for ln in lines:
+            lo = ln.lower()
+            if any(kw in lo for kw in _EXCLUDE):
+                continue
+            if any(kw in lo for kw in _INCLUDE):
+                found.append(ln)
+        return found
 
     @Slot(str)
     def enableStreaming(self, topic: str) -> None:

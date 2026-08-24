@@ -61,6 +61,7 @@ except ImportError:
     _ROS2_OK = False
 
 from skymeshx.ros.context import acquire_ros, release_ros
+from skymeshx.exceptions import DependencyError
 
 
 class ThermalCameraSubscriber:
@@ -94,13 +95,9 @@ class ThermalCameraSubscriber:
         max_temp: float = 150.0
     ):
         if not _ROS2_OK:
-            raise ImportError(
-                "ROS2 (rclpy) not available. Install with: pip install rclpy cv_bridge"
-            )
+            raise DependencyError("rclpy", "pip install rclpy cv_bridge")
         if not _NUMPY_OK:
-            raise ImportError(
-                "NumPy not available. Install with: pip install numpy"
-            )
+            raise DependencyError("numpy", "pip install numpy")
         
         self.topic = topic
         self.callback = callback
@@ -319,7 +316,7 @@ class ThermalHotspotDetector:
             min_hotspot_size: Minimum number of pixels for valid hotspot
         """
         if not _NUMPY_OK:
-            raise ImportError("NumPy required for hotspot detection")
+            raise DependencyError("numpy", "pip install numpy")
         
         self.threshold_temp = threshold_temp
         self.min_hotspot_size = min_hotspot_size

@@ -72,6 +72,9 @@ class SwarmContext(QObject):
         self._backend.log_message.connect(self.logMessage)
         self._backend.fsm_state_changed.connect(self.fsmStateChanged)
 
+        # Track connected-drone count to avoid emitting countsChanged every tick
+        self._last_connected_count: int = -1
+
         # ── Shared state — guarded by self._state_lock ────────────────────
         # Without this lock, mission/formation bookkeeping was mutated from
         # multiple daemon threads concurrently and lost updates silently.
@@ -685,6 +688,116 @@ class SwarmContext(QObject):
                 "INFO", f"cancelAllMissions: cancelled {len(ids)} mission(s)"
             )
 
+    @Slot(str, result=str)
+    def loadWaypointFile(self, path: str) -> str:
+        """Read a .json or .txt waypoint file and return a JSON array string.
+
+        Supported formats:
+          - JSON array: [{lat, lon, alt}, ...]  or  [[lat, lon, alt], ...]
+          - ArduPilot QGC plain-text (.txt / .waypoints):
+              QGC WPL 110
+              0  1  0  16  0  0  0  0  lat  lon  alt  1
+              1  0  3  16  0  0  0  0  lat  lon  alt  1
+
+        Returns a JSON array string on success, or "" on error (error is
+        emitted via logMessage so QML can display it).
+        """
+        import json as _json
+        import os
+
+        path = path.strip()
+        # Qt file URLs (file:///...) → plain path
+        if path.startswith("file:///"):
+            path = path[7:]
+        elif path.startswith("file://"):
+            path = path[6:]
+
+        if not os.path.isfile(path):
+            self.logMessage.emit("ERROR", f"[WP] File not found: {path}")
+            return ""
+
+        try:
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                raw = fh.read()
+        except OSError as exc:
+            self.logMessage.emit("ERROR", f"[WP] Cannot read file: {exc}")
+            return ""
+
+        raw = raw.strip()
+        wps: list = []
+
+        # ── JSON branch ──────────────────────────────────────────────────────
+        if path.lower().endswith(".json") or raw.startswith("[") or raw.startswith("{"):
+            try:
+                data = _json.loads(raw)
+            except Exception as exc:
+                self.logMessage.emit("ERROR", f"[WP] JSON parse error: {exc}")
+                return ""
+            if isinstance(data, dict) and "waypoints" in data:
+                data = data["waypoints"]
+            if not isinstance(data, list):
+                self.logMessage.emit("ERROR", "[WP] JSON must be an array")
+                return ""
+            for item in data:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    lat = float(item[0]); lon = float(item[1])
+                    alt = float(item[2]) if len(item) > 2 else 10.0
+                    wps.append({"lat": lat, "lon": lon, "alt": alt})
+                elif isinstance(item, dict):
+                    lat = float(item.get("lat", item.get("latitude", 0)))
+                    lon = float(item.get("lon", item.get("longitude", 0)))
+                    alt = float(item.get("alt", item.get("altitude", 10.0)))
+                    wps.append({"lat": lat, "lon": lon, "alt": alt})
+
+        # ── QGC plain-text / ArduPilot .waypoints branch ─────────────────────
+        else:
+            for line in raw.splitlines():
+                line = line.strip()
+                if not line or line.startswith("QGC") or line.startswith("#"):
+                    continue
+                parts = line.split()
+                # QGC WPL 110 format: idx cur frame cmd p1 p2 p3 p4 lat lon alt auto
+                if len(parts) >= 11:
+                    try:
+                        cmd = int(parts[3])
+                        # Skip home (index 0) and non-NAV_WAYPOINT commands if possible
+                        if int(parts[0]) == 0 and int(parts[1]) == 1:
+                            continue  # skip home waypoint marker
+                        lat = float(parts[8])
+                        lon = float(parts[9])
+                        alt = float(parts[10])
+                        if lat == 0.0 and lon == 0.0:
+                            continue
+                        wps.append({"lat": lat, "lon": lon, "alt": alt})
+                    except (ValueError, IndexError):
+                        continue
+                # Simple 3-column: lat lon alt
+                elif len(parts) == 3:
+                    try:
+                        wps.append({"lat": float(parts[0]),
+                                    "lon": float(parts[1]),
+                                    "alt": float(parts[2])})
+                    except ValueError:
+                        continue
+                # Simple 2-column: lat lon  (use default alt 10 m)
+                elif len(parts) == 2:
+                    try:
+                        wps.append({"lat": float(parts[0]),
+                                    "lon": float(parts[1]),
+                                    "alt": 10.0})
+                    except ValueError:
+                        continue
+
+        if not wps:
+            self.logMessage.emit("WARN", f"[WP] No valid waypoints found in: {os.path.basename(path)}")
+            return ""
+
+        self.logMessage.emit(
+            "INFO",
+            f"[WP] Loaded {len(wps)} waypoints from {os.path.basename(path)}"
+        )
+        return _json.dumps(wps)
+
     @Slot(str, str)
     def runMissionMulti(self, drone_ids_json: str, waypoints_json: str) -> None:
         """Run the same waypoint mission on multiple drones in parallel."""
@@ -1038,7 +1151,13 @@ class SwarmContext(QObject):
     # ── Internal ──────────────────────────────────────────────────────────
 
     def _on_telemetry(self, all_snaps: dict) -> None:
-        self.countsChanged.emit()
+        # Only emit countsChanged when the connected count actually changes —
+        # firing it on every 5 Hz telemetry tick re-evaluates all QML Property
+        # bindings using countsChanged as notify signal and causes unnecessary redraws.
+        cur = sum(1 for b in self._backend.all_backends().values() if b.is_connected)
+        if cur != self._last_connected_count:
+            self._last_connected_count = cur
+            self.countsChanged.emit()
         self.telemetryUpdated.emit(all_snaps)
 
     # ── Swarm Algorithms ─────────────────────────────────────────────────────

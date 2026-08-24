@@ -8,6 +8,7 @@ starting processes (mocked).
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from skymeshx.simulation.px4_gazebo import PX4GazeboCluster
+from skymeshx.exceptions import ConfigurationError, InvalidParameterError, SimulationError
 
 
 class TestPX4GazeboCluster:
@@ -46,16 +47,16 @@ class TestPX4GazeboCluster:
         assert len(cluster.ros2_setups) == 1
     
     def test_init_invalid_num_drones(self):
-        """Test that invalid num_drones raises ValueError."""
-        with pytest.raises(ValueError, match="num_drones must be between 1 and 10"):
+        """Test that invalid num_drones raises InvalidParameterError."""
+        with pytest.raises(InvalidParameterError, match="num_drones"):
             PX4GazeboCluster(num_drones=0)
-        
-        with pytest.raises(ValueError, match="num_drones must be between 1 and 10"):
+
+        with pytest.raises(InvalidParameterError, match="num_drones"):
             PX4GazeboCluster(num_drones=11)
-    
+
     def test_init_invalid_px4_dir(self):
-        """Test that invalid PX4 directory raises FileNotFoundError."""
-        with pytest.raises(FileNotFoundError, match="PX4 directory not found"):
+        """Test that invalid PX4 directory raises ConfigurationError."""
+        with pytest.raises(ConfigurationError, match="PX4 directory not found"):
             PX4GazeboCluster(px4_dir="/nonexistent/path")
     
     @patch('skymeshx.simulation.px4_gazebo.os.path.isdir')
@@ -203,7 +204,7 @@ class TestPX4GazeboCluster:
         mock_proc.poll.return_value = 1  # Fail
         mock_popen.return_value = mock_proc
         
-        with pytest.raises(RuntimeError, match="Failed to start"):
+        with pytest.raises(SimulationError, match="Failed to start"):
             with PX4GazeboCluster(num_drones=1):
                 pass
     

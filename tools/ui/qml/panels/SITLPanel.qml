@@ -1654,6 +1654,41 @@ Item {
 
                             Text { text: "GAZEBO KONFIGURATION"; font.pixelSize: 10; font.weight: Font.Bold; color: "#94a3b8"; font.letterSpacing: 0.8 }
 
+                            // ── Quickselect presets ───────────────────────────
+                            ColumnLayout { Layout.fillWidth: true; spacing: 4
+                                Text { text: "Preset"; color: "#64748b"; font.pixelSize: 11 }
+                                Row { spacing: 6
+                                    // agri_drone preset
+                                    Rectangle {
+                                        height: 28; width: agriPresetLbl.implicitWidth + 20; radius: 5
+                                        color: agriPresetM.containsMouse ? "#14321e" : "#0d1f14"
+                                        border.color: "#16a34a"; border.width: 1
+                                        Text { id: agriPresetLbl; text: "agri_drone"; color: "#4ade80"; font.pixelSize: 11; font.family: "Consolas"; anchors.centerIn: parent }
+                                        MouseArea { id: agriPresetM; anchors.fill: parent; hoverEnabled: true
+                                            onClicked: {
+                                                gzWorldField.text  = "ardupilot_gazebo/worlds/farm_world.sdf"
+                                                gzFrameField.text  = "gazebo-iris"
+                                                gzParamFileField.text = "ardupilot_gazebo/config/agri_drone.parm"
+                                            }
+                                        }
+                                    }
+                                    // iris_runway preset
+                                    Rectangle {
+                                        height: 28; width: irisPresetLbl.implicitWidth + 20; radius: 5
+                                        color: irisPresetM.containsMouse ? "#1e2535" : "#111827"
+                                        border.color: "#2563eb"; border.width: 1
+                                        Text { id: irisPresetLbl; text: "iris_runway"; color: "#93c5fd"; font.pixelSize: 11; font.family: "Consolas"; anchors.centerIn: parent }
+                                        MouseArea { id: irisPresetM; anchors.fill: parent; hoverEnabled: true
+                                            onClicked: {
+                                                gzWorldField.text  = "ardupilot_gazebo/worlds/iris_runway.sdf"
+                                                gzFrameField.text  = "gazebo-iris"
+                                                gzParamFileField.text = ""
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
                             ColumnLayout { Layout.fillWidth: true; spacing: 4
                                 Text { text: "World (.sdf)"; color: "#64748b"; font.pixelSize: 11 }
                                 Rectangle { Layout.fillWidth: true; height: 34; radius: 6; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
@@ -1683,20 +1718,68 @@ Item {
                                     TextInput { id: gzFrameField; text: "gazebo-iris"; anchors.fill: parent; anchors.leftMargin: 10; verticalAlignment: TextInput.AlignVCenter; color: "#e2e8f0"; font.pixelSize: 12; font.family: "Consolas" } }
                             }
 
-                            // Commands preview
+                            // ── ArduPilot param file (optional) ───────────────
+                            ColumnLayout { Layout.fillWidth: true; spacing: 4
+                                RowLayout { Layout.fillWidth: true
+                                    Text { text: "--add-param-file"; color: "#64748b"; font.pixelSize: 11; font.family: "Consolas" }
+                                    Item { Layout.fillWidth: true }
+                                    Text { text: "optional"; color: "#374151"; font.pixelSize: 9 }
+                                }
+                                Rectangle { Layout.fillWidth: true; height: 34; radius: 6; color: "#1e2535"; border.color: "#2d3748"; border.width: 1
+                                    TextInput {
+                                        id: gzParamFileField
+                                        anchors { fill: parent; leftMargin: 10; rightMargin: 10 }
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        color: "#a3e635"; font.pixelSize: 12; font.family: "Consolas"
+                                        Text {
+                                            visible: gzParamFileField.text.length === 0
+                                            text: "z.B. ardupilot_gazebo/config/agri_drone.parm"
+                                            color: "#374151"; font: gzParamFileField.font
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+                                }
+                                Text {
+                                    text: "Pfad relativ zum Workspace-Pfad (oder absolut)"
+                                    color: "#475569"; font.pixelSize: 9; Layout.fillWidth: true
+                                }
+                            }
+
+                            // ── Command preview (live, beide Terminals) ───────
                             Rectangle {
                                 Layout.fillWidth: true; height: gzCmdsText.implicitHeight + 14; radius: 6
                                 color: "#080b10"; border.color: "#1e2535"; border.width: 1
                                 Text {
                                     id: gzCmdsText
                                     anchors { left: parent.left; right: parent.right; top: parent.top; margins: 10 }
-                                    text: "# Terminal 1 — Gazebo:\ngz sim -v" + gzVerbosityCombo.currentText + " -r " + (gzWorldField.text || "iris_runway.sdf") +
-                                          "\n\n# Terminal 2 — SITL:\npython3 Tools/autotest/sim_vehicle.py \\\n  -v ArduCopter -f " + (gzFrameField.text || "gazebo-iris") + " \\\n  --model JSON --map --console"
+                                    text: {
+                                        var ws   = gzWsPathField.text  || "~/gz_ws/src"
+                                        var world = gzWorldField.text  || "iris_runway.sdf"
+                                        var frame = gzFrameField.text  || "gazebo-iris"
+                                        var parm  = gzParamFileField.text.trim()
+                                        var v     = gzVerbosityCombo.currentText
+
+                                        var gz = "# Terminal 1 — Gazebo:\n"
+                                            + "export GZ_SIM_RESOURCE_PATH=" + ws + ":$GZ_SIM_RESOURCE_PATH\n"
+                                            + "gz sim -v" + v + " -r " + world
+
+                                        var sitlCmd = "# Terminal 2 — SITL:\n"
+                                            + "cd ~/ardupilot\n"
+                                            + "python3 Tools/autotest/sim_vehicle.py \\\n"
+                                            + "  -v ArduCopter -f " + frame + " \\\n"
+                                            + "  --model JSON --map --console"
+                                        if (parm !== "") {
+                                            sitlCmd += " \\\n  --add-param-file=" + ws + "/" + parm
+                                        }
+                                        return gz + "\n\n" + sitlCmd
+                                    }
                                     color: "#38bdf8"; font.family: "Consolas"; font.pixelSize: 10; lineHeight: 1.7
+                                    wrapMode: Text.WrapAnywhere
                                 }
                             }
 
                             Row { spacing: 8
+                                // ▶ Start Gazebo
                                 Rectangle {
                                     width: 140; height: 36; radius: 7
                                     color: gzStartM.containsMouse ? "#1e3a5f" : "#0d1623"; border.color: "#2563eb"; border.width: 1
@@ -1705,13 +1788,15 @@ Item {
                                         onClicked: {
                                             if (!ok()) return
                                             sitl.launchGazebo(JSON.stringify({
-                                                world:      gzWorldField.text.trim(),
-                                                verbosity:  parseInt(gzVerbosityCombo.currentText) || 4,
-                                                gz_ws_path: gzWsPathField.text.trim()
+                                                world:           gzWorldField.text.trim(),
+                                                verbosity:       parseInt(gzVerbosityCombo.currentText) || 4,
+                                                gz_ws_path:      gzWsPathField.text.trim(),
+                                                gz_resource_path: gzWsPathField.text.trim()
                                             }))
                                         }
                                     }
                                 }
+                                // ▶ Start SITL (Gazebo)
                                 Rectangle {
                                     width: 160; height: 36; radius: 7
                                     color: gzSitlM.containsMouse ? "#15803d" : "#166534"; border.color: "#22c55e"; border.width: 1
@@ -1719,7 +1804,18 @@ Item {
                                     MouseArea { id: gzSitlM; anchors.fill: parent; hoverEnabled: true; enabled: root._repoValid
                                         onClicked: {
                                             if (!ok()) return
-                                            sitl.launchSimVehicle(JSON.stringify({ vehicle: "ArduCopter", frame: gzFrameField.text.trim(), extra_args: "--model JSON", use_map: false, use_console: false }))
+                                            var parm = gzParamFileField.text.trim()
+                                            var ws   = gzWsPathField.text.trim()
+                                            var extra = "--model JSON"
+                                            if (parm !== "")
+                                                extra += " --add-param-file=" + ws + "/" + parm
+                                            sitl.launchSimVehicle(JSON.stringify({
+                                                vehicle:    "ArduCopter",
+                                                frame:      gzFrameField.text.trim(),
+                                                extra_args: extra,
+                                                use_map:    false,
+                                                use_console: false
+                                            }))
                                         }
                                     }
                                 }
@@ -1955,8 +2051,29 @@ Item {
                                     }
                                 }
 
+                                // ── Auto-Detect result list ───────────────────
+                                // Shown when detectStreamingTopics() returns >1 topic
+                                property var _detectedTopics: []
+                                Repeater {
+                                    model: parent._detectedTopics
+                                    delegate: Rectangle {
+                                        Layout.fillWidth: true; height: 26; radius: 4
+                                        color: topicPickM.containsMouse ? "#14321e" : "#0d1f14"
+                                        border.color: "#16a34a"; border.width: 1
+                                        Row {
+                                            anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 8 }
+                                            spacing: 6
+                                            Text { text: "↳"; color: "#4ade80"; font.pixelSize: 10 }
+                                            Text { text: modelData; color: "#4ade80"; font.pixelSize: 10; font.family: "Consolas" }
+                                        }
+                                        MouseArea { id: topicPickM; anchors.fill: parent; hoverEnabled: true
+                                            onClicked: gzEnableStreamingField.text = modelData
+                                        }
+                                    }
+                                }
+
                                 Row { spacing: 8
-                                    // Auto-Detect button — calls detectStreamingTopics() and fills the field
+                                    // Auto-Detect button
                                     Rectangle {
                                         width: 110; height: 30; radius: 6
                                         color: autoDetectM.containsMouse ? "#1e3a5f" : "#0d1623"; border.color: "#2563eb"; border.width: 1
@@ -1965,8 +2082,15 @@ Item {
                                             onClicked: {
                                                 if (!ok()) return
                                                 var topics = sitl.detectStreamingTopics()
-                                                if (topics && topics.length > 0)
+                                                if (topics && topics.length > 0) {
+                                                    // Always fill field with first hit
                                                     gzEnableStreamingField.text = topics[0]
+                                                    // Show full list as clickable chips
+                                                    parent.parent._detectedTopics = topics
+                                                } else {
+                                                    parent.parent._detectedTopics = []
+                                                    gzEnableStreamingField.text = ""
+                                                }
                                             }
                                         }
                                     }

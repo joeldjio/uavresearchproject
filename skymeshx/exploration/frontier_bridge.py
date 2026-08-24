@@ -64,6 +64,7 @@ except ImportError:
     _ROS2_OK = False
 
 from skymeshx.ros.context import acquire_ros, release_ros
+from skymeshx.exceptions import DependencyError, ROS2InitError, ROS2NotAvailableError
 
 
 def _euler_to_quat(roll: float, pitch: float, yaw: float) -> tuple:
@@ -101,10 +102,9 @@ class FrontierExplorationBridge:
         on_volume_update: Optional[Callable] = None,
     ):
         if not _ROS2_OK:
-            raise ImportError(
-                "rclpy not found.\n"
-                "Install ROS2 and: pip install rclpy\n"
-                "Or build from source: https://docs.ros.org/en/humble/Installation.html"
+            raise DependencyError(
+                "rclpy",
+                "install ROS2 Humble: https://docs.ros.org/en/humble/Installation.html",
             )
         self._drone = drone
         self._ns = ns
@@ -127,9 +127,9 @@ class FrontierExplorationBridge:
         if self._running:
             return
         if not _ROS2_OK:
-            raise RuntimeError("ROS2 not available")
+            raise ROS2NotAvailableError("ROS2 not available")
         if not acquire_ros():
-            raise RuntimeError("rclpy.init() failed")
+            raise ROS2InitError("rclpy.init() failed")
         self._running = True
         self._thread = threading.Thread(
             target=self._spin, daemon=True, name="frontier-bridge"

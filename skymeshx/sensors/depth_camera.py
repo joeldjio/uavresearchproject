@@ -57,6 +57,7 @@ except ImportError:
     _ROS2_OK = False
 
 from skymeshx.ros.context import acquire_ros, release_ros
+from skymeshx.exceptions import DependencyError
 
 
 class DepthCameraSubscriber:
@@ -88,9 +89,7 @@ class DepthCameraSubscriber:
         downsample: int = 1
     ):
         if not _ROS2_OK:
-            raise ImportError(
-                "ROS2 (rclpy) not available. Install with: pip install rclpy sensor_msgs_py"
-            )
+            raise DependencyError("rclpy", "pip install rclpy sensor_msgs_py")
         
         self.topic = topic
         self.callback = callback

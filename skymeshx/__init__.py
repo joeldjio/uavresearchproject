@@ -40,6 +40,10 @@ from skymeshx.exceptions import (
     BatteryLowError,
     DependencyError,
     TimeoutError,
+    SimulationError,
+    ScriptAbortedError,
+    LLMResponseError,
+    SessionError,
 )
 
 __version__ = "0.2.0"
@@ -67,6 +71,10 @@ __all__ = [
     "BatteryLowError",
     "DependencyError",
     "TimeoutError",
+    "SimulationError",
+    "ScriptAbortedError",
+    "LLMResponseError",
+    "SessionError",
 ]
 
 # Lazy imports — avoids hard dependencies at import time

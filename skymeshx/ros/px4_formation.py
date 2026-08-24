@@ -37,6 +37,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 
 from skymeshx.sdk.formations import formation_offsets, SHAPES
+from skymeshx.exceptions import DependencyError, ROS2NotAvailableError
 
 # Optional ROS2 imports
 _ROS2_OK = False
@@ -98,9 +99,9 @@ class PX4FormationController:
             update_rate_hz: Position update rate (default 20Hz)
         """
         if not _ROS2_OK:
-            raise RuntimeError("rclpy not available - install ROS2 Humble+")
+            raise ROS2NotAvailableError("rclpy not available — install ROS2 Humble+")
         if not _PX4_MSGS_OK:
-            raise RuntimeError("px4_msgs not available - build px4_msgs package")
+            raise DependencyError("px4_msgs", "colcon build --packages-select px4_msgs")
         
         self.leader_ns = leader_ns
         self.follower_namespaces = follower_namespaces

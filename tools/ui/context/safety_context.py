@@ -273,20 +273,26 @@ class SafetyContext(QObject):
             alt = snap.get("alt_rel", 0.0)
             armed = snap.get("armed", False)
 
+            # Skip invalid GPS fix — lat=0/lon=0 means no fix yet.
+            # Without this guard, drones with no fix all land at (0,0) in NED
+            # which makes the collision predictor report them as critically close
+            # and draws warning lines between every drone pair on the map.
+            if lat == 0.0 or lon == 0.0:
+                continue
+
             # Set reference on first valid position
-            if not self._ref_set and lat != 0.0:
+            if not self._ref_set:
                 self._ref_lat = lat
                 self._ref_lon = lon
                 self._ref_lon_scale = 111_320.0 * math.cos(math.radians(self._ref_lat))
                 self._ref_set = True
 
             # Convert to local NED
-            if self._ref_set:
-                x = (lat - self._ref_lat) * 111_320.0
-                y = (lon - self._ref_lon) * self._ref_lon_scale
-                self._drone_positions[did] = _DronePosition(
-                    x=x, y=y, z=alt, armed=bool(armed)
-                )
+            x = (lat - self._ref_lat) * 111_320.0
+            y = (lon - self._ref_lon) * self._ref_lon_scale
+            self._drone_positions[did] = _DronePosition(
+                x=x, y=y, z=alt, armed=bool(armed)
+            )
 
     @Slot(str, result="QVariant")
     def getSafeWaypoint(self, drone_id: str) -> dict:

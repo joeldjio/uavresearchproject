@@ -513,6 +513,22 @@ Window {
             onLoaded: {
                 item.selectedDroneId = Qt.binding(function() { return root.selectedDroneId })
                 if (typeof swarm !== "undefined") item.swarmRef = swarm
+                // Upload-Mission tile → draw loaded waypoints on the map
+                item.uploadMissionTile.fileWaypointsReady.connect(function(wpJson) {
+                    globalMissionWaypoints.clear()
+                    if (wpJson === "") {
+                        root.syncWaypointsToMap()
+                        return
+                    }
+                    try {
+                        var arr = JSON.parse(wpJson)
+                        for (var i = 0; i < arr.length; i++)
+                            globalMissionWaypoints.append({ lat: arr[i].lat, lon: arr[i].lon, alt: arr[i].alt })
+                    } catch (e) {}
+                    root.syncWaypointsToMap()
+                    // Jump to map tab so the user sees the waypoints
+                    root.selectTabById("map")
+                })
             }
         }
 
@@ -934,11 +950,13 @@ Window {
                     function onTelemetryUpdated(snapshot) {
                         if (!mapLoader.item) return
                         var drones = {}
-                        var ids = swarm.droneIds()
-                        if (!ids) return
-                        for (var i = 0; i < ids.length; i++) {
-                            var id = ids[i]
-                            var s = swarm.droneSnapshot(id)
+                        // B-M9: use the snapshot dict emitted by _aggregate — avoids a
+                        // second droneSnapshot() call that can return a stale lat=0.0
+                        // value and cause markers to blink (remove + re-create every tick).
+                        var keys = snapshot ? Object.keys(snapshot) : []
+                        for (var i = 0; i < keys.length; i++) {
+                            var id = keys[i]
+                            var s = snapshot[id]
                             if (s && s.lat !== undefined && s.lat !== 0.0) {
                                 drones[id] = { lat: s.lat, lon: s.lon, heading: s.yaw || 0, armed: s.armed || false, droneType: (s.droneType || "generic"), alt: s.alt_rel || 0 }
                                 if (!root._zoomedDrones[id]) {

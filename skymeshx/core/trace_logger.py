@@ -10,10 +10,13 @@ import shutil
 import sys
 import threading
 import time
+import traceback
 from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from skymeshx.exceptions import SessionError, SkyMeshXError
 
 
 JsonDict = dict[str, Any]
@@ -225,7 +228,7 @@ class TraceLogger:
     def start_session(self, scenario: str, sim_config: dict | None = None) -> str:
         with self._lock:
             if self._active:
-                raise RuntimeError("Trace session already active")
+                raise SessionError("Trace session already active")
 
             sim_config = dict(sim_config or {})
             self.root.mkdir(parents=True, exist_ok=True)
@@ -414,11 +417,34 @@ class TraceLogger:
     def log_error(self, source: str, msg: str) -> None:
         self._append_jsonl("ui_events.jsonl", "error", str(source), {"message": str(msg)})
 
+    def log_exception(self, exc: BaseException, source: str = "unknown") -> None:
+        """Log an exception into the active trace session.
+
+        Records exception type, message, whether it is a SkyMeshXError subclass,
+        and the full traceback. Safe to call from any thread; no-op when no session
+        is active.
+
+        Args:
+            exc: The exception instance to record.
+            source: Human-readable origin label (e.g. ``"connection"``, ``"mission"``).
+        """
+        self._append_jsonl(
+            "ui_events.jsonl",
+            "error",
+            str(source),
+            {
+                "message": str(exc),
+                "exceptionType": type(exc).__name__,
+                "isSkyMeshXError": isinstance(exc, SkyMeshXError),
+                "traceback": traceback.format_exc(),
+            },
+        )
+
     def export_markdown(self, path: str | Path | None = None) -> str:
         with self._lock:
             bundle = self._session_path or self._last_session_path
             if bundle is None:
-                raise RuntimeError("No trace session available")
+                raise SessionError("No trace session available")
             output = Path(path) if path else bundle / "trace_summary.md"
 
         summary = analyze_trace_bundle(bundle)

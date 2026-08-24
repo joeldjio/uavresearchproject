@@ -60,6 +60,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from skymeshx.safety.apf import APFSafetyFilter, Pose3D
+from skymeshx.exceptions import ConfigurationError, LLMResponseError
 
 
 @dataclass
@@ -231,7 +232,7 @@ Output format (ONLY JSON, nothing else):
         elif self._backend == "mock":
             return self._call_mock(prompt)
         else:
-            raise ValueError(f"Unknown backend: {self._backend}")
+            raise ConfigurationError(f"Unknown LLM backend: {self._backend!r}")
 
     def _call_gemini(self, prompt: str) -> str:
         resp = self._client.generate_content(prompt)
@@ -400,5 +401,8 @@ Output format (ONLY JSON, nothing else):
         # Find JSON object
         match = re.search(r"\{.*\}", text, re.DOTALL)
         if not match:
-            raise ValueError(f"No JSON found in LLM response: {text[:200]}")
+            raise LLMResponseError(
+                f"No JSON found in LLM response: {text[:200]}",
+                raw_response=text,
+            )
         return json.loads(match.group(0))

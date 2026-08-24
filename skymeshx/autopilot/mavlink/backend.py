@@ -15,6 +15,7 @@ import time
 from typing import Callable, Dict, List, Optional, Tuple
 
 from skymeshx.autopilot.base import AutopilotBackend, TelemetrySnapshot
+from skymeshx.exceptions import DependencyError
 
 try:
     from pymavlink import mavutil
@@ -51,7 +52,7 @@ class MAVLinkBackend(AutopilotBackend):
 
     def connect(self, connection_string: str, baud: int = 57600, **kwargs) -> bool:
         if not _MAV_OK:
-            raise ImportError("pymavlink not installed: pip install pymavlink")
+            raise DependencyError("pymavlink", "pip install pymavlink")
         try:
             self._conn = mavutil.mavlink_connection(
                 connection_string, baud=baud,

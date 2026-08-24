@@ -25,6 +25,8 @@ try:
 except ImportError:
     _VALIDATION_OK = False
 
+from skymeshx.exceptions import DependencyError, MissionUploadError, ROS2NotAvailableError
+
 try:
     import rclpy
     from rclpy.node import Node
@@ -94,9 +96,9 @@ class PX4MissionUploader:
             namespace: PX4 namespace (e.g., "uav_1")
         """
         if not _ROS2_OK:
-            raise RuntimeError("rclpy not available")
+            raise ROS2NotAvailableError("rclpy not available")
         if not _PX4_MSGS_OK:
-            raise RuntimeError("px4_msgs not available")
+            raise DependencyError("px4_msgs", "colcon build --packages-select px4_msgs")
         
         self._node = node
         self._ns = f"/{namespace}" if namespace else ""
@@ -311,7 +313,7 @@ class PX4MissionUploader:
             >>> success = future.result()  # Wait for completion
         """
         if self._upload_status != UploadStatus.IDLE:
-            raise RuntimeError(f"Upload already in progress (status: {self._upload_status.value})")
+            raise MissionUploadError(f"Upload already in progress (status: {self._upload_status.value})")
         
         # Reset state
         self._upload_cancelled.clear()

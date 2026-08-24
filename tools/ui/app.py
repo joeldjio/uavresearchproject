@@ -261,7 +261,18 @@ def run() -> int:
     profiler.mark("ready")
     profiler.report()
 
-    return app.exec()
+    exit_code = app.exec()
+
+    # Explicitly destroy the QML engine before the Python GC runs.
+    # Without this, async Loaders that are still constructing objects at
+    # window-close time trigger Qt's "items still being created at engine
+    # destruction" warning.  Clearing root objects first lets the engine
+    # shut down all pending async work cleanly before it is deleted.
+    del root_window
+    engine.clearComponentCache()
+    del engine
+
+    return exit_code
 
 
 if __name__ == "__main__":

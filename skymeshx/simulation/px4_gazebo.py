@@ -18,6 +18,8 @@ import signal
 import sys
 import threading
 from typing import Optional, List, Callable
+
+from skymeshx.exceptions import ConfigurationError, InvalidParameterError, SimulationError
 import logging
 
 logger = logging.getLogger(__name__)
@@ -81,18 +83,18 @@ class PX4GazeboCluster:
                          source can be "xrce_agent", "px4_sitl_0", etc.
         """
         if num_drones < 1 or num_drones > 10:
-            raise ValueError("num_drones must be between 1 and 10")
+            raise InvalidParameterError("num_drones", num_drones, "valid range: 1–10")
 
         # Validate model/world/namespace_prefix to prevent shell injection.
         # These values end up in a shell command string (shell=True is required
         # for `source setup.bash && make` chaining on Linux).
         _SAFE_IDENT = re.compile(r"^[a-zA-Z0-9_\-]+$")
         if not _SAFE_IDENT.match(model):
-            raise ValueError(f"Invalid model name '{model}' — only [a-zA-Z0-9_-] allowed")
+            raise InvalidParameterError("model", model, "only [a-zA-Z0-9_-] allowed")
         if not _SAFE_IDENT.match(world):
-            raise ValueError(f"Invalid world name '{world}' — only [a-zA-Z0-9_-] allowed")
+            raise InvalidParameterError("world", world, "only [a-zA-Z0-9_-] allowed")
         if not _SAFE_IDENT.match(namespace_prefix):
-            raise ValueError(f"Invalid namespace_prefix '{namespace_prefix}' — only [a-zA-Z0-9_-] allowed")
+            raise InvalidParameterError("namespace_prefix", namespace_prefix, "only [a-zA-Z0-9_-] allowed")
 
         self.num_drones = num_drones
         self.px4_dir = os.path.expanduser(px4_dir)
@@ -108,7 +110,7 @@ class PX4GazeboCluster:
         
         # Validate PX4 directory
         if not os.path.isdir(self.px4_dir):
-            raise FileNotFoundError(f"PX4 directory not found: {self.px4_dir}")
+            raise ConfigurationError(f"PX4 directory not found: {self.px4_dir}")
     
     def start(self) -> bool:
         """
@@ -339,7 +341,7 @@ class PX4GazeboCluster:
     def __enter__(self):
         """Context manager entry."""
         if not self.start():
-            raise RuntimeError("Failed to start PX4 Gazebo cluster")
+            raise SimulationError("Failed to start PX4 Gazebo cluster")
         return self
     
     def __exit__(self, *args):

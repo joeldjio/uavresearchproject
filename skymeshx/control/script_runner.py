@@ -18,6 +18,8 @@ Script environment:
 
 import io
 import math
+
+from skymeshx.exceptions import ScriptAbortedError
 import sys
 import threading
 import time
@@ -171,7 +173,7 @@ class ScriptRunner:
         end = time.time() + seconds
         while time.time() < end:
             if self._stop.is_set():
-                raise InterruptedError("Script stopped by user")
+                raise ScriptAbortedError("Script stopped by user")
             time.sleep(0.05)
 
     def _emit_output(self, text: str):
